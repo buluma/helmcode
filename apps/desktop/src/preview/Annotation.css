@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--helmcode-font-sans);
+  --font-mono: var(--helmcode-font-mono);
+  --color-background: var(--helmcode-background);
+  --color-foreground: var(--helmcode-foreground);
+  --color-popover: var(--helmcode-popover);
+  --color-popover-foreground: var(--helmcode-popover-foreground);
+  --color-primary: var(--helmcode-primary);
+  --color-primary-foreground: var(--helmcode-primary-foreground);
+  --color-muted: var(--helmcode-muted);
+  --color-muted-foreground: var(--helmcode-muted-foreground);
+  --color-accent: var(--helmcode-accent);
+  --color-accent-foreground: var(--helmcode-accent-foreground);
+  --color-border: var(--helmcode-border);
+  --color-input: var(--helmcode-input);
+  --color-ring: var(--helmcode-ring);
+  --radius-sm: calc(var(--helmcode-radius) - 4px);
+  --radius-md: calc(var(--helmcode-radius) - 2px);
+  --radius-lg: var(--helmcode-radius);
+  --radius-xl: calc(var(--helmcode-radius) + 4px);
+  --radius-2xl: calc(var(--helmcode-radius) + 8px);
+}
+
+:host {
+  --helmcode-font-sans:
+    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --helmcode-font-mono:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --helmcode-radius: 0.625rem;
+  --helmcode-background: white;
+  --helmcode-foreground: oklch(0.269 0 0);
+  --helmcode-popover: white;
+  --helmcode-popover-foreground: oklch(0.269 0 0);
+  --helmcode-primary: oklch(0.488 0.217 264);
+  --helmcode-primary-foreground: white;
+  --helmcode-muted: rgb(0 0 0 / 4%);
+  --helmcode-muted-foreground: oklch(0.556 0 0);
+  --helmcode-accent: rgb(0 0 0 / 4%);
+  --helmcode-accent-foreground: oklch(0.269 0 0);
+  --helmcode-border: rgb(0 0 0 / 8%);
+  --helmcode-input: rgb(0 0 0 / 10%);
+  --helmcode-ring: oklch(0.488 0.217 264);
+  color: var(--helmcode-foreground);
+  font-family: var(--helmcode-font-sans);
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--helmcode-border);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--helmcode-ring) 72%, transparent);
+  outline-offset: 1px;
+}

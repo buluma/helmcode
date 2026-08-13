@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["HelmCodeTerminalModule"],
+    "podspecPath": "HelmCodeTerminalNative.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.helmcodeterminal.HelmCodeTerminalModule"]
+  }
+}

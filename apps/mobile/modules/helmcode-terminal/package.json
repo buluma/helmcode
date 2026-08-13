@@ -1,0 +1,17 @@
+{
+  "name": "@helmcode/mobile-terminal-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "HelmCodeTerminalModule"
+      ]
+    },
+    "android": {
+      "modules": [
+        "expo.modules.helmcodeterminal.HelmCodeTerminalModule"
+      ]
+    }
+  }
+}

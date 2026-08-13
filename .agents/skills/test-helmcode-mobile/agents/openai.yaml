@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test HelmCode Mobile"
+  short_description: "Test Helm Code on iOS or Android"
+  default_prompt: "Use $test-helmcode-mobile to launch Helm Code against an isolated backend and verify the affected flow on an available simulator or emulator."
