@@ -20,7 +20,7 @@ This starts the Helm Code server on your machine and opens the local web app. Us
 ## Desktop App
 
 Download the latest release from
-[GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
+[GitHub Releases](https://github.com/buluma/helmcode/releases), or install from a package
 registry.
 
 Windows:

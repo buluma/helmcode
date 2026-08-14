@@ -11,7 +11,7 @@ import {
 describe("openPullRequestLink", () => {
   it("opens the requested pull request URL", async () => {
     const openExternal = vi.fn(async () => undefined);
-    const targetUrl = "https://github.com/pingdotgg/t3code/pull/123";
+    const targetUrl = "https://github.com/buluma/helmcode/pull/123";
 
     await openPullRequestLink({ openExternal }, targetUrl);
 
@@ -20,7 +20,7 @@ describe("openPullRequestLink", () => {
 
   it("reports bridge failures with a safe target origin", async () => {
     const cause = new Error("desktop shell unavailable");
-    const targetUrl = "https://github.com/pingdotgg/t3code/pull/123?token=secret";
+    const targetUrl = "https://github.com/buluma/helmcode/pull/123?token=secret";
     const openExternal = vi.fn(async () => Promise.reject(cause));
 
     const result = openPullRequestLink({ openExternal }, targetUrl);
@@ -176,7 +176,7 @@ describe("findProjectForChangeRequest", () => {
   it("keeps two hosts apart, so an Enterprise link does not open the public one", () => {
     const projects = [
       project({
-        canonicalKey: "github.com/pingdotgg/t3code",
+        canonicalKey: "github.com/buluma/helmcode",
         provider: "github",
         owner: "pingdotgg",
         name: "helmcode",
@@ -185,7 +185,7 @@ describe("findProjectForChangeRequest", () => {
     expect(
       findProjectForChangeRequest(projects, {
         host: "github.acme.test",
-        repository: "pingdotgg/t3code",
+        repository: "buluma/helmcode",
         number: 1,
       }),
     ).toBeUndefined();
@@ -194,7 +194,7 @@ describe("findProjectForChangeRequest", () => {
   it("claims nothing for a lookalike host, which is what keeps a link a link", () => {
     const projects = [
       project({
-        canonicalKey: "github.com/pingdotgg/t3code",
+        canonicalKey: "github.com/buluma/helmcode",
         provider: "github",
         owner: "pingdotgg",
         name: "helmcode",
@@ -203,7 +203,7 @@ describe("findProjectForChangeRequest", () => {
     expect(
       findProjectForChangeRequest(projects, {
         host: "github.com-evil.test",
-        repository: "pingdotgg/t3code",
+        repository: "buluma/helmcode",
         number: 1,
       }),
     ).toBeUndefined();

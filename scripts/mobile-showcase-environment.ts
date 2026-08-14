@@ -117,7 +117,7 @@ export const SHOWCASE_PROJECTS = [
     id: "helmcode",
     title: "Helm Code",
     directory: "helmcode",
-    repositoryUrl: "https://github.com/pingdotgg/t3code.git",
+    repositoryUrl: "https://github.com/buluma/helmcode.git",
     favicon: PROJECT_FAVICONS.helmcode,
   },
   {
@@ -305,7 +305,7 @@ async function seedHelmCodeWorkspace(workspaceRoot: string): Promise<void> {
   );
   await initializeRepository({
     workspaceRoot,
-    repositoryUrl: "https://github.com/pingdotgg/t3code.git",
+    repositoryUrl: "https://github.com/buluma/helmcode.git",
     commitMessage: "Show connected environments",
   });
   await runGit(workspaceRoot, ["checkout", "-b", "feat/remote-command-center"]);

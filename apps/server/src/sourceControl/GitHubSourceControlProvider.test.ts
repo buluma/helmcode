@@ -37,7 +37,7 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
         Effect.succeed({
           number: 42,
           title: "Add GitHub provider",
-          url: "https://github.com/pingdotgg/t3code/pull/42",
+          url: "https://github.com/buluma/helmcode/pull/42",
           baseRefName: "main",
           headRefName: "feature/source-control",
           state: "open",
@@ -56,7 +56,7 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
       provider: "github",
       number: 42,
       title: "Add GitHub provider",
-      url: "https://github.com/pingdotgg/t3code/pull/42",
+      url: "https://github.com/buluma/helmcode/pull/42",
       baseRefName: "main",
       headRefName: "feature/source-control",
       state: "open",
@@ -82,7 +82,7 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
     const error = yield* provider
       .getChangeRequest({
         cwd: "/repo",
-        reference: "https://user:secret@github.com/pingdotgg/t3code/pull/42?token=secret#diff",
+        reference: "https://user:secret@github.com/buluma/helmcode/pull/42?token=secret#diff",
       })
       .pipe(Effect.flip);
 
@@ -100,7 +100,7 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
         operation: "getChangeRequest",
         command: "gh",
         cwd: "/repo",
-        reference: "https://github.com/pingdotgg/t3code/pull/42",
+        reference: "https://github.com/buluma/helmcode/pull/42",
         detail: "Pull request not found. Check the PR number or URL and try again.",
       },
     );
@@ -121,7 +121,7 @@ it.effect("uses gh json listing for non-open change request state queries", () =
               {
                 number: 7,
                 title: "Merged work",
-                url: "https://github.com/pingdotgg/t3code/pull/7",
+                url: "https://github.com/buluma/helmcode/pull/7",
                 baseRefName: "main",
                 headRefName: "feature/merged",
                 state: "merged",

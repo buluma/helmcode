@@ -121,7 +121,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                HELMCODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code",
+                HELMCODE_DESKTOP_UPDATE_REPOSITORY: "buluma/helmcode",
               },
             }),
           ),
@@ -132,7 +132,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                GITHUB_REPOSITORY: "pingdotgg/t3code",
+                GITHUB_REPOSITORY: "buluma/helmcode",
               },
             }),
           ),
