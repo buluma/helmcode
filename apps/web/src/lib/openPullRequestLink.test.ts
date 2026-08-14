@@ -180,7 +180,7 @@ describe("findProjectForChangeRequest", () => {
       project({
         canonicalKey: "github.com/buluma/helmcode",
         provider: "github",
-        owner: "pingdotgg",
+        owner: "buluma",
         name: "helmcode",
       }),
     ];
@@ -198,7 +198,7 @@ describe("findProjectForChangeRequest", () => {
       project({
         canonicalKey: "github.com/buluma/helmcode",
         provider: "github",
-        owner: "pingdotgg",
+        owner: "buluma",
         name: "helmcode",
       }),
     ];
