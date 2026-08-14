@@ -26,7 +26,10 @@ class HelmCodeComposerEditorModule : Module() {
       Prop("lineHeight") { view: HelmCodeComposerEditorView, lineHeight: Double ->
         view.setLineHeight(lineHeight.toFloat())
       }
-      Prop("contentInsetVertical") { view: HelmCodeComposerEditorView, contentInsetVertical: Double ->
+      Prop("contentInsetVertical") {
+          view: HelmCodeComposerEditorView,
+          contentInsetVertical: Double
+        ->
         view.setContentInsetVertical(contentInsetVertical.toInt())
       }
 
