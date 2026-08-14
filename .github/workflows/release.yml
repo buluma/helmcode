@@ -87,7 +87,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -896,7 +896,7 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.relay_public_config.outputs.available == 'true' && secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.relay_public_config.outputs.available == 'true' && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -920,6 +920,17 @@ jobs:
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+
+      - id: vercel
+        name: Check Vercel configuration
+        shell: bash
+        run: |
+          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" || -z "${VERCEL_PROJECT_ID:-}" ]]; then
+            echo "Vercel deployment is not configured; skipping web deployment." >&2
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -952,6 +963,7 @@ jobs:
         run: vp install --lockfile-only --ignore-scripts
 
       - name: Deploy and alias channel
+        if: steps.vercel.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -1014,12 +1026,27 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
     needs: [preflight, release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - id: release_app
+        name: Check release app configuration
+        env:
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "${RELEASE_APP_ID:-}" || -z "${RELEASE_APP_PRIVATE_KEY:-}" ]]; then
+            echo "Release GitHub App is not configured; skipping version bump." >&2
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
       - id: app_token
+        if: steps.release_app.outputs.available == 'true'
         name: Mint release app token
         uses: actions/create-github-app-token@v2
         with:
@@ -1028,6 +1055,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
+        if: steps.release_app.outputs.available == 'true'
         uses: actions/checkout@v6
         with:
           ref: main
@@ -1040,6 +1068,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - id: app_bot
+        if: steps.release_app.outputs.available == 'true'
         name: Resolve GitHub App bot identity
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
@@ -1050,6 +1079,7 @@ jobs:
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
       - name: Setup Vite+
+        if: steps.release_app.outputs.available == 'true'
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -1060,6 +1090,7 @@ jobs:
               - --filter=@helmcode/oxlint-plugin-helmcode...
 
       - id: update_versions
+        if: steps.release_app.outputs.available == 'true'
         name: Update version strings
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
