@@ -21,39 +21,11 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 > - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
-### Try it out (install-free)
-
-The easiest way to test Helm Code is to run the server in your terminal (requires Node.js 22.16+, 23.11+, or 24.10+):
-
-```bash
-npx helmcode@latest
-```
-
-This will launch Helm Code's backend on your machine as well as the local web app to control your agents.
-
-Tip: Use `npx helmcode@latest --help` for the full CLI reference.
-
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/buluma/helmcode/releases), or from your favorite package registry:
+This fork publishes raw desktop binaries (dmg/exe/AppImage) to [GitHub Releases](https://github.com/buluma/helmcode/releases). Download the latest one for your platform there.
 
-#### Windows (`winget`)
-
-```bash
-winget install HelmCode.HelmCode
-```
-
-#### macOS (Homebrew)
-
-```bash
-brew install --cask helmcode-code
-```
-
-#### Arch Linux (AUR)
-
-```bash
-yay -S helmcode-bin
-```
+npm (`npx helmcode@latest`) and package-registry installs (`winget`, Homebrew, AUR) are not set up on this fork — those need a published npm package and separate submissions to each registry, none of which exist here yet. Run from source instead if you want the "install-free" server-only path; see [CONTRIBUTING.md](./CONTRIBUTING.md) and the section below.
 
 ## Some notes
 

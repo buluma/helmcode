@@ -8,38 +8,16 @@ Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the Helm Code ser
 
 At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
 
-## Run Without Installing
-
-```bash
-npx helmcode@latest
-```
-
-This starts the Helm Code server on your machine and opens the local web app. Use
-`npx helmcode@latest --help` for the full CLI reference.
-
 ## Desktop App
 
 Download the latest release from
-[GitHub Releases](https://github.com/buluma/helmcode/releases), or install from a package
-registry.
+[GitHub Releases](https://github.com/buluma/helmcode/releases): a `.dmg` for macOS, `.exe`
+installer for Windows, or `.AppImage` for Linux.
 
-Windows:
-
-```bash
-winget install HelmCode.HelmCode
-```
-
-macOS:
-
-```bash
-brew install --cask helmcode-code
-```
-
-Arch Linux:
-
-```bash
-yay -S helmcode-bin
-```
+`npx helmcode@latest` and package-registry installs (`winget`, Homebrew, AUR) are not available on
+this fork — those require a published npm package and separate registry submissions that don't
+exist here. Build and run from source instead if you want the server-only path; see
+[CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Providers
 
