@@ -45,10 +45,7 @@ import {
   WINDOWS_ASAR_UNPACK,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
-import {
-  HostProcessArchitecture,
-  HostProcessPlatform,
-} from "@helmcode/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@helmcode/shared/hostProcess";
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -92,19 +89,13 @@ function iconResizeSpawnerLayer(
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
-    assert.equal(
-      resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"),
-      "nightly",
-    );
+    assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "Helm Code (Alpha)");
-    assert.equal(
-      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
-      "Helm Code (Nightly)",
-    );
+    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Helm Code (Nightly)");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -114,22 +105,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
     });
 
-    assert.deepStrictEqual(
-      resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"),
-      {
-        macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
-        linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
-        windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
-      },
-    );
+    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"), {
+      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+    });
   });
 
   it("switches the bundled splash and favicon branding for nightly versions", () => {
     assert.equal(resolveDesktopWebAssetBrand("0.0.17"), "production");
-    assert.equal(
-      resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"),
-      "nightly",
-    );
+    assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
   });
 
   it.effect("resolves GitHub desktop publish config from Effect config", () =>
@@ -201,8 +186,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       createStagePatchedDependencies(
         {
-          "@expo/metro-config@56.0.13":
-            "patches/@expo%2Fmetro-config@56.0.13.patch",
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
           "@ff-labs/fff-node@0.9.4": "patches/@ff-labs__fff-node@0.9.4.patch",
           "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
           "alchemy@2.0.0-beta.49": "patches/alchemy@2.0.0-beta.49.patch",
@@ -224,8 +208,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       createStagePatchedDependencies(
         {
-          "@expo/metro-config@56.0.13":
-            "patches/@expo%2Fmetro-config@56.0.13.patch",
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
         },
         { effect: "4.0.0-beta.73" },
       ),
@@ -235,56 +218,41 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("installs optional native dependencies for the target desktop architecture", () => {
     assert.deepStrictEqual(STAGE_INSTALL_ARGS, ["install", "--prod"]);
-    assert.deepStrictEqual(
-      createStageWorkspaceConfig({ platform: "mac", arch: "x64" }),
-      {
-        supportedArchitectures: {
-          os: ["darwin"],
-          cpu: ["x64"],
-        },
+    assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "mac", arch: "x64" }), {
+      supportedArchitectures: {
+        os: ["darwin"],
+        cpu: ["x64"],
       },
-    );
-    assert.deepStrictEqual(
-      createStageWorkspaceConfig({ platform: "linux", arch: "x64" }),
-      {
-        supportedArchitectures: {
-          os: ["linux"],
-          cpu: ["x64"],
-          libc: ["glibc"],
-        },
+    });
+    assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "linux", arch: "x64" }), {
+      supportedArchitectures: {
+        os: ["linux"],
+        cpu: ["x64"],
+        libc: ["glibc"],
       },
-    );
+    });
     // Windows artifacts also bundle the same-architecture WSL (Linux, glibc) backend, so the
     // staged install must fetch its native optional deps (e.g. ffi-rs) too.
-    assert.deepStrictEqual(
-      createStageWorkspaceConfig({ platform: "win", arch: "x64" }),
-      {
-        supportedArchitectures: {
-          os: ["win32", "linux"],
-          cpu: ["x64"],
-          libc: ["glibc"],
-        },
+    assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "win", arch: "x64" }), {
+      supportedArchitectures: {
+        os: ["win32", "linux"],
+        cpu: ["x64"],
+        libc: ["glibc"],
       },
-    );
-    assert.deepStrictEqual(
-      createStageWorkspaceConfig({ platform: "win", arch: "arm64" }),
-      {
-        supportedArchitectures: {
-          os: ["win32", "linux"],
-          cpu: ["arm64"],
-          libc: ["glibc"],
-        },
+    });
+    assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "win", arch: "arm64" }), {
+      supportedArchitectures: {
+        os: ["win32", "linux"],
+        cpu: ["arm64"],
+        libc: ["glibc"],
       },
-    );
-    assert.deepStrictEqual(
-      createStageWorkspaceConfig({ platform: "mac", arch: "universal" }),
-      {
-        supportedArchitectures: {
-          os: ["darwin"],
-          cpu: ["arm64", "x64"],
-        },
+    });
+    assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "mac", arch: "universal" }), {
+      supportedArchitectures: {
+        os: ["darwin"],
+        cpu: ["arm64", "x64"],
       },
-    );
+    });
   });
 
   it("stages pnpm 11 allowBuilds and patchedDependencies in the workspace yaml", () => {
@@ -386,74 +354,58 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/helmcode; for OAuth deep links.
-      assert.deepStrictEqual(
-        (linux.linux as Record<string, unknown>).protocols,
-        [{ name: "Helm Code", schemes: ["helmcode", "helmcode-dev"] }],
-      );
+      assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
+        { name: "Helm Code", schemes: ["helmcode", "helmcode-dev"] },
+      ]);
       for (const config of [mac, linux, win]) {
-        assert.deepStrictEqual(
-          config.electronLanguages,
-          DESKTOP_ELECTRON_LANGUAGES,
-        );
+        assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
         assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
       }
-    }).pipe(
-      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-    ),
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it.effect(
-    "preserves both Linux icon resize failures with structural context",
-    () => {
-      const commands: Array<{
-        readonly command: string;
-        readonly args: ReadonlyArray<string>;
-      }> = [];
+  it.effect("preserves both Linux icon resize failures with structural context", () => {
+    const commands: Array<{
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+    }> = [];
 
-      return Effect.gen(function* () {
-        const error = yield* stageLinuxIconSize(
-          "source.png",
-          "target.png",
-          512,
-          false,
-        ).pipe(
-          Effect.provide(iconResizeSpawnerLayer(commands, [1, 2])),
-          Effect.flip,
-        );
+    return Effect.gen(function* () {
+      const error = yield* stageLinuxIconSize("source.png", "target.png", 512, false).pipe(
+        Effect.provide(iconResizeSpawnerLayer(commands, [1, 2])),
+        Effect.flip,
+      );
 
-        assert.instanceOf(error, LinuxIconResizeError);
-        assert.equal(error.operation, "resize");
-        assert.equal(error.iconSize, 512);
-        assert.equal(error.primaryTool, "magick");
-        assert.equal(error.fallbackTool, "convert");
-        assert.include(error.message, "512x512");
-        assert.include(error.message, "`magick`");
-        assert.include(error.message, "`convert`");
-        assert.notInclude(error.message, "non-zero exit code");
+      assert.instanceOf(error, LinuxIconResizeError);
+      assert.equal(error.operation, "resize");
+      assert.equal(error.iconSize, 512);
+      assert.equal(error.primaryTool, "magick");
+      assert.equal(error.fallbackTool, "convert");
+      assert.include(error.message, "512x512");
+      assert.include(error.message, "`magick`");
+      assert.include(error.message, "`convert`");
+      assert.notInclude(error.message, "non-zero exit code");
 
-        assert.instanceOf(error.cause, AggregateError);
-        const aggregateCause = error.cause as AggregateError;
-        assert.lengthOf(aggregateCause.errors, 2);
-        assert.strictEqual(aggregateCause.cause, aggregateCause.errors[0]);
-        assert.instanceOf(aggregateCause.errors[0], BuildCommandFailedError);
-        assert.instanceOf(aggregateCause.errors[1], BuildCommandFailedError);
-        const primaryError = aggregateCause
-          .errors[0] as BuildCommandFailedError;
-        const fallbackError = aggregateCause
-          .errors[1] as BuildCommandFailedError;
-        assert.equal(primaryError.command, "magick linux icon 512x512");
-        assert.equal(primaryError.exitCode, 1);
-        assert.include(primaryError.message, "magick linux icon");
-        assert.equal(fallbackError.command, "convert linux icon 512x512");
-        assert.equal(fallbackError.exitCode, 2);
-        assert.include(fallbackError.message, "convert linux icon");
-        assert.deepStrictEqual(
-          commands.map(({ command }) => command),
-          ["magick", "convert"],
-        );
-      });
-    },
-  );
+      assert.instanceOf(error.cause, AggregateError);
+      const aggregateCause = error.cause as AggregateError;
+      assert.lengthOf(aggregateCause.errors, 2);
+      assert.strictEqual(aggregateCause.cause, aggregateCause.errors[0]);
+      assert.instanceOf(aggregateCause.errors[0], BuildCommandFailedError);
+      assert.instanceOf(aggregateCause.errors[1], BuildCommandFailedError);
+      const primaryError = aggregateCause.errors[0] as BuildCommandFailedError;
+      const fallbackError = aggregateCause.errors[1] as BuildCommandFailedError;
+      assert.equal(primaryError.command, "magick linux icon 512x512");
+      assert.equal(primaryError.exitCode, 1);
+      assert.include(primaryError.message, "magick linux icon");
+      assert.equal(fallbackError.command, "convert linux icon 512x512");
+      assert.equal(fallbackError.exitCode, 2);
+      assert.include(fallbackError.message, "convert linux icon");
+      assert.deepStrictEqual(
+        commands.map(({ command }) => command),
+        ["magick", "convert"],
+      );
+    });
+  });
 
   it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
     const configuration = resolveMacPasskeySigningConfiguration({
@@ -483,25 +435,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(
-      entitlements,
-      "<string>ABC1234567.com.helmcode.helmcode</string>",
-    );
-    assert.include(
-      entitlements,
-      "<string>webcredentials:clerk.example.com</string>",
-    );
-    assert.include(
-      entitlements,
-      "<string>webcredentials:example.clerk.accounts.dev</string>",
-    );
+    assert.include(entitlements, "<string>ABC1234567.com.helmcode.helmcode</string>");
+    assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
+    assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {
-    const captureError = (
-      env: Readonly<Record<string, string | undefined>>,
-    ) => {
+    const captureError = (env: Readonly<Record<string, string | undefined>>) => {
       try {
         resolveMacPasskeySigningConfiguration(env);
       } catch (error) {
@@ -514,10 +455,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       HELMCODE_APPLE_TEAM_ID: "ABC1234567",
       HELMCODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
     });
-    assert.instanceOf(
-      missingProfileError,
-      MissingMacPasskeyProvisioningProfileError,
-    );
+    assert.instanceOf(missingProfileError, MissingMacPasskeyProvisioningProfileError);
     assert.equal(
       missingProfileError.message,
       "HELMCODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
@@ -533,10 +471,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.instanceOf(invalidDomainError, InvalidMacPasskeyRpDomainError);
     assert.equal(invalidDomainError.reason, "scheme-not-allowed");
     assert.equal(invalidDomainError.inputLength, unsafeDomain.length);
-    assert.equal(
-      invalidDomainError.message,
-      "Invalid passkey RP domain (scheme-not-allowed).",
-    );
+    assert.equal(invalidDomainError.message, "Invalid passkey RP domain (scheme-not-allowed).");
     assert.notProperty(invalidDomainError, "domain");
     assert.notProperty(invalidDomainError, "cause");
     const serializedInvalidDomainError = JSON.stringify(invalidDomainError);
@@ -558,15 +493,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       HELMCODE_MACOS_PROVISIONING_PROFILE: "/tmp/helmcode.provisionprofile",
       HELMCODE_CLERK_PUBLISHABLE_KEY: "pk_test_%",
     });
-    assert.instanceOf(
-      invalidPublishableKeyError,
-      InvalidMacPasskeyPublishableKeyError,
-    );
+    assert.instanceOf(invalidPublishableKeyError, InvalidMacPasskeyPublishableKeyError);
     assert.ok(invalidPublishableKeyError.cause);
-    assert.equal(
-      invalidPublishableKeyError.message,
-      "HELMCODE_CLERK_PUBLISHABLE_KEY is invalid.",
-    );
+    assert.equal(invalidPublishableKeyError.message, "HELMCODE_CLERK_PUBLISHABLE_KEY is invalid.");
     assert.notProperty(invalidPublishableKeyError, "publishableKey");
     assert.notInclude(invalidPublishableKeyError.message, "pk_test_%");
   });
@@ -576,8 +505,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     const knownError = new InvalidMacPasskeyPublishableKeyError({
       cause: decodingCause,
     });
-    const error =
-      MacPasskeySigningConfigurationResolutionError.fromCause(knownError);
+    const error = MacPasskeySigningConfigurationResolutionError.fromCause(knownError);
 
     assert.strictEqual(error, knownError);
     assert.instanceOf(error, InvalidMacPasskeyPublishableKeyError);
@@ -588,72 +516,48 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("wraps unknown passkey signing configuration defects without copying cause text", () => {
     const secret = "pk_test_do-not-retain";
     const cause = new Error(secret);
-    const error =
-      MacPasskeySigningConfigurationResolutionError.fromCause(cause);
+    const error = MacPasskeySigningConfigurationResolutionError.fromCause(cause);
 
     assert.instanceOf(error, MacPasskeySigningConfigurationResolutionError);
     assert.strictEqual(error.cause, cause);
-    assert.equal(
-      error.message,
-      "Failed to resolve macOS passkey signing configuration.",
-    );
+    assert.equal(error.message, "Failed to resolve macOS passkey signing configuration.");
     assert.notInclude(error.message, secret);
   });
 
-  it.effect(
-    "adds passkey entitlements and both renderer protocols to signed macOS builds",
-    () =>
-      Effect.gen(function* () {
-        const config = yield* createBuildConfig(
-          "mac",
-          "dmg",
-          "1.2.3",
-          true,
-          false,
-          undefined,
-          {
-            entitlementsPath: "/tmp/entitlements.mac.plist",
-            provisioningProfilePath: "/tmp/helmcode.provisionprofile",
-          },
-        );
+  it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
+        entitlementsPath: "/tmp/entitlements.mac.plist",
+        provisioningProfilePath: "/tmp/helmcode.provisionprofile",
+      });
 
-        const mac = config.mac as Record<string, unknown>;
-        assert.equal(config.appId, "com.helmcode.helmcode");
-        assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
-        assert.equal(mac.provisioningProfile, "/tmp/helmcode.provisionprofile");
-        assert.deepStrictEqual(mac.protocols, [
-          { name: "Helm Code", schemes: ["helmcode", "helmcode-dev"] },
-        ]);
-      }).pipe(
-        Effect.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-        ),
-      ),
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(config.appId, "com.helmcode.helmcode");
+      assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
+      assert.equal(mac.provisioningProfile, "/tmp/helmcode.provisionprofile");
+      assert.deepStrictEqual(mac.protocols, [
+        { name: "Helm Code", schemes: ["helmcode", "helmcode-dev"] },
+      ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it.effect(
-    "keeps executable resource editing enabled for unsigned Windows builds",
-    () =>
-      Effect.gen(function* () {
-        const config = yield* createBuildConfig(
-          "win",
-          "nsis",
-          "1.2.3",
-          false,
-          false,
-          undefined,
-          undefined,
-        );
+  it.effect("keeps executable resource editing enabled for unsigned Windows builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
 
-        const win = config.win as Record<string, unknown>;
-        assert.equal(win.icon, "icon.ico");
-        assert.equal(win.signAndEditExecutable, true);
-        assert.notProperty(win, "azureSignOptions");
-      }).pipe(
-        Effect.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-        ),
-      ),
+      const win = config.win as Record<string, unknown>;
+      assert.equal(win.icon, "icon.ico");
+      assert.equal(win.signAndEditExecutable, true);
+      assert.notProperty(win, "azureSignOptions");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it("stages the resource monitor as an external executable resource", () => {
@@ -663,100 +567,67 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         to: "resource-monitor",
       },
     ]);
-    assert.deepStrictEqual(
-      resolveResourceMonitorRustTargets("mac", "universal"),
-      ["aarch64-apple-darwin", "x86_64-apple-darwin"],
-    );
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+    ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("linux", "x64"), [
       "x86_64-unknown-linux-gnu",
     ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("win", "arm64"), [
       "aarch64-pc-windows-msvc",
     ]);
-    assert.equal(
-      resourceMonitorExecutableName("mac"),
-      "helmcode-resource-monitor",
-    );
-    assert.equal(
-      resourceMonitorExecutableName("win"),
-      "helmcode-resource-monitor.exe",
-    );
+    assert.equal(resourceMonitorExecutableName("mac"), "helmcode-resource-monitor");
+    assert.equal(resourceMonitorExecutableName("win"), "helmcode-resource-monitor.exe");
   });
   it("promotes target fff binaries to direct staged dependencies", () => {
-    assert.deepStrictEqual(
-      resolveFffNativeDependencies("mac", "arm64", "0.9.4"),
-      {
-        "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
-      },
-    );
-    assert.deepStrictEqual(
-      resolveFffNativeDependencies("mac", "universal", "0.9.4"),
-      {
-        "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
-        "@ff-labs/fff-bin-darwin-x64": "0.9.4",
-      },
-    );
-    assert.deepStrictEqual(
-      resolveFffNativeDependencies("win", "x64", "0.9.4"),
-      {
-        "@ff-labs/fff-bin-win32-x64": "0.9.4",
-      },
-    );
-    assert.deepStrictEqual(
-      resolveFffNativeDependencies("linux", "x64", "0.9.4"),
-      {
-        "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
-        "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
-      },
-    );
-    assert.deepStrictEqual(
-      resolveFffNativeDependencies("linux", "arm64", "0.9.4"),
-      {
-        "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
-        "@ff-labs/fff-bin-linux-arm64-musl": "0.9.4",
-      },
-    );
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "universal", "0.9.4"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+      "@ff-labs/fff-bin-darwin-x64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("win", "x64", "0.9.4"), {
+      "@ff-labs/fff-bin-win32-x64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "x64", "0.9.4"), {
+      "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
+      "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "arm64", "0.9.4"), {
+      "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
+      "@ff-labs/fff-bin-linux-arm64-musl": "0.9.4",
+    });
   });
 
   it("resolves target Clerk passkey native artifacts", () => {
-    assert.deepStrictEqual(
-      resolveClerkPasskeyNativeArtifacts("mac", "universal"),
-      [
-        {
-          packageName: "@clerk/electron-passkeys-darwin-arm64",
-          binaryFileName: "electron-passkeys.darwin-arm64.node",
-        },
-        {
-          packageName: "@clerk/electron-passkeys-darwin-x64",
-          binaryFileName: "electron-passkeys.darwin-x64.node",
-        },
-      ],
-    );
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
+      {
+        packageName: "@clerk/electron-passkeys-darwin-arm64",
+        binaryFileName: "electron-passkeys.darwin-arm64.node",
+      },
+      {
+        packageName: "@clerk/electron-passkeys-darwin-x64",
+        binaryFileName: "electron-passkeys.darwin-x64.node",
+      },
+    ]);
     assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("win", "x64"), [
       {
         packageName: "@clerk/electron-passkeys-win32-x64-msvc",
         binaryFileName: "electron-passkeys.win32-x64-msvc.node",
       },
     ]);
-    assert.deepStrictEqual(
-      resolveClerkPasskeyNativeArtifacts("linux", "x64"),
-      [],
-    );
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("linux", "x64"), []);
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {
-    assert.equal(
-      resolveMockUpdateServerUrl(undefined),
-      "http://localhost:3000",
-    );
+    assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
     assert.equal(resolveMockUpdateServerUrl(4123), "http://localhost:4123");
   });
 
   it("derives the electron-builder package manager user agent from packageManager", () => {
-    assert.equal(
-      resolvePackageManagerUserAgent("pnpm@11.10.0"),
-      "pnpm/11.10.0",
-    );
+    assert.equal(resolvePackageManagerUserAgent("pnpm@11.10.0"), "pnpm/11.10.0");
     assert.equal(resolvePackageManagerUserAgent(" yarn@4.9.2 "), "yarn/4.9.2");
     assert.equal(resolvePackageManagerUserAgent("pnpm"), "pnpm");
   });
@@ -801,115 +672,106 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
-  it.effect(
-    "resolves default platform and architecture from host references",
-    () =>
-      Effect.gen(function* () {
-        const resolved = yield* resolveBuildOptions({
-          platform: Option.none(),
-          target: Option.none(),
-          arch: Option.none(),
-          buildVersion: Option.none(),
-          outputDir: Option.none(),
-          skipBuild: Option.none(),
-          keepStage: Option.none(),
-          signed: Option.none(),
-          verbose: Option.none(),
-          mockUpdates: Option.none(),
-          mockUpdateServerPort: Option.none(),
-          wslPrebuild: Option.none(),
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(HostProcessPlatform, "win32"),
-              Layer.succeed(HostProcessArchitecture, "x64"),
-              ConfigProvider.layer(
-                ConfigProvider.fromEnv({
-                  env: {
-                    PROCESSOR_ARCHITECTURE: "AMD64",
-                    PROCESSOR_ARCHITEW6432: "ARM64",
-                  },
-                }),
-              ),
-            ),
-          ),
-        );
-
-        assert.equal(resolved.platform, "win");
-        assert.equal(resolved.target, "nsis");
-        assert.equal(resolved.arch, "arm64");
-      }),
-  );
-
-  it.effect(
-    "rejects universal builds on Linux and Windows before staging binaries",
-    () =>
-      Effect.gen(function* () {
-        for (const platform of ["linux", "win"] as const) {
-          const error = yield* Effect.flip(
-            resolveBuildOptions({
-              platform: Option.some(platform),
-              target: Option.none(),
-              arch: Option.some("universal"),
-              buildVersion: Option.none(),
-              outputDir: Option.none(),
-              skipBuild: Option.none(),
-              keepStage: Option.none(),
-              signed: Option.none(),
-              verbose: Option.none(),
-              mockUpdates: Option.none(),
-              mockUpdateServerPort: Option.none(),
-              wslPrebuild: Option.none(),
-            }),
-          );
-
-          assert.instanceOf(error, UnsupportedDesktopBuildArchitectureError);
-          assert.deepStrictEqual(error.supportedArchitectures, [
-            "x64",
-            "arm64",
-          ]);
-        }
-      }),
-  );
-
-  it.effect(
-    "preserves explicit false boolean flags over true env defaults",
-    () =>
-      Effect.gen(function* () {
-        const resolved = yield* resolveBuildOptions({
-          platform: Option.some("mac"),
-          target: Option.none(),
-          arch: Option.some("arm64"),
-          buildVersion: Option.none(),
-          outputDir: Option.some("release-test"),
-          skipBuild: Option.some(false),
-          keepStage: Option.some(false),
-          signed: Option.some(false),
-          verbose: Option.some(false),
-          mockUpdates: Option.some(false),
-          mockUpdateServerPort: Option.none(),
-          wslPrebuild: Option.none(),
-        }).pipe(
-          Effect.provide(
+  it.effect("resolves default platform and architecture from host references", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.none(),
+        target: Option.none(),
+        arch: Option.none(),
+        buildVersion: Option.none(),
+        outputDir: Option.none(),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "win32"),
+            Layer.succeed(HostProcessArchitecture, "x64"),
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HELMCODE_DESKTOP_SKIP_BUILD: "true",
-                  HELMCODE_DESKTOP_KEEP_STAGE: "true",
-                  HELMCODE_DESKTOP_SIGNED: "true",
-                  HELMCODE_DESKTOP_VERBOSE: "true",
-                  HELMCODE_DESKTOP_MOCK_UPDATES: "true",
+                  PROCESSOR_ARCHITECTURE: "AMD64",
+                  PROCESSOR_ARCHITEW6432: "ARM64",
                 },
               }),
             ),
           ),
+        ),
+      );
+
+      assert.equal(resolved.platform, "win");
+      assert.equal(resolved.target, "nsis");
+      assert.equal(resolved.arch, "arm64");
+    }),
+  );
+
+  it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
+    Effect.gen(function* () {
+      for (const platform of ["linux", "win"] as const) {
+        const error = yield* Effect.flip(
+          resolveBuildOptions({
+            platform: Option.some(platform),
+            target: Option.none(),
+            arch: Option.some("universal"),
+            buildVersion: Option.none(),
+            outputDir: Option.none(),
+            skipBuild: Option.none(),
+            keepStage: Option.none(),
+            signed: Option.none(),
+            verbose: Option.none(),
+            mockUpdates: Option.none(),
+            mockUpdateServerPort: Option.none(),
+            wslPrebuild: Option.none(),
+          }),
         );
 
-        assert.equal(resolved.skipBuild, false);
-        assert.equal(resolved.keepStage, false);
-        assert.equal(resolved.signed, false);
-        assert.equal(resolved.verbose, false);
-        assert.equal(resolved.mockUpdates, false);
-      }),
+        assert.instanceOf(error, UnsupportedDesktopBuildArchitectureError);
+        assert.deepStrictEqual(error.supportedArchitectures, ["x64", "arm64"]);
+      }
+    }),
+  );
+
+  it.effect("preserves explicit false boolean flags over true env defaults", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("mac"),
+        target: Option.none(),
+        arch: Option.some("arm64"),
+        buildVersion: Option.none(),
+        outputDir: Option.some("release-test"),
+        skipBuild: Option.some(false),
+        keepStage: Option.some(false),
+        signed: Option.some(false),
+        verbose: Option.some(false),
+        mockUpdates: Option.some(false),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                HELMCODE_DESKTOP_SKIP_BUILD: "true",
+                HELMCODE_DESKTOP_KEEP_STAGE: "true",
+                HELMCODE_DESKTOP_SIGNED: "true",
+                HELMCODE_DESKTOP_VERBOSE: "true",
+                HELMCODE_DESKTOP_MOCK_UPDATES: "true",
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(resolved.skipBuild, false);
+      assert.equal(resolved.keepStage, false);
+      assert.equal(resolved.signed, false);
+      assert.equal(resolved.verbose, false);
+      assert.equal(resolved.mockUpdates, false);
+    }),
   );
 });
