@@ -86,7 +86,7 @@ describe("managed endpoint names", () => {
       "dev-julius-abcdef0123456789.example.com",
     );
     expect(managedEndpointHostname("prod", "@@PHELMCODERELAY@@", hash)).toBe(
-      "prod-abcdef0123456789.@@PHELMCODERELAY@@",
+      "prod-abcdef0123456789.@@phelmcoderelay@@",
     );
     expect(managedEndpointTunnelName("dev_julius", hash)).toBe(
       "helmcoderelay-managedendpoint-dev-julius-abcdef0123456789",

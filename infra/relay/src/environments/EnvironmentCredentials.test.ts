@@ -148,7 +148,7 @@ describe("EnvironmentCredentials", () => {
           environmentId: "env_test",
           environmentPublicKey: "environment-public-key",
         });
-        const [, credentialId, secret] = token.split("_");
+        const [, , credentialId, secret] = token.split("_");
 
         expect(token).toMatch(/^helmcode_env_[0-9a-f]{64}_[0-9a-f]{96}$/);
         expect(credentialId).toHaveLength(64);
