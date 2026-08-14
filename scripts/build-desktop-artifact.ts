@@ -1576,6 +1576,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: ["helmcode", "helmcode-dev"],
         },
       ],
+      ...(signed ? {} : { identity: "-" }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
