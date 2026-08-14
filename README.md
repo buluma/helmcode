@@ -1,14 +1,17 @@
 # Helm Code
 
-Helm Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/helmcode-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.helmcode.helmcode)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+Helm Code is an "agent harness control surface": a server that drives coding-agent CLIs on your machine, plus web, desktop, and mobile clients to control them.
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, Helm Code can control them.
 
+> [!NOTE]
+> This is [buluma](https://github.com/buluma)'s fork of T3 Code. It ships its own desktop builds from [GitHub Releases](https://github.com/buluma/helmcode/releases); it does not publish to the App Store, Play Store, or any hosted web app — those belong to the upstream project. Web and mobile clients here are source you build and run yourself; see [docs/internals/overview.md](./docs/internals/overview.md).
+
 ## "Wait, what are you selling me?"
 
-Nothing. We built Helm Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+Nothing. Helm Code exists because its authors wanted the best possible development experience with agents. They were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met the bar.
 
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+The goal was something performant, remote-ready, and truly open — open enough that if it ever goes the wrong direction, you have everything you need to fork it and build the editor you want. This repo is exactly that: a fork.
 
 ## Installation
 
@@ -25,13 +28,13 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 
 This fork publishes raw desktop binaries (dmg/exe/AppImage) to [GitHub Releases](https://github.com/buluma/helmcode/releases). Download the latest one for your platform there.
 
-npm (`npx helmcode@latest`) and package-registry installs (`winget`, Homebrew, AUR) are not set up on this fork — those need a published npm package and separate submissions to each registry, none of which exist here yet. Run from source instead if you want the "install-free" server-only path; see [CONTRIBUTING.md](./CONTRIBUTING.md) and the section below.
+`npx helmcode@latest` and package-registry installs (`winget`, Homebrew, AUR) are not set up on this fork — those need a published npm package and separate submissions to each registry, none of which exist here yet. Run from source instead if you want the "install-free" server-only path; see the contributing section below.
 
 ## Some notes
 
-We are very very early in this project. Expect bugs.
+This is early and forked. Expect bugs, and expect it to drift from upstream over time.
 
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
+Not actively accepting contributions right now — small, focused fixes may still be considered. See [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 
 ## Documentation
 
@@ -49,32 +52,28 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
-## If you REALLY want to contribute still.... read this first
+## Building from source
 
 ### Install `vp`
 
 Helm Code uses Vite+ so you'll need to install the global `vp` command-line tool.
 
-#### macOS / Linux
+macOS / Linux:
 
 ```bash
 curl -fsSL https://vite.plus | bash
 ```
 
-#### Windows
+Windows:
 
 ```bash
 irm https://vite.plus/ps1 | iex
 ```
 
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
+See their getting-started guide for more: https://viteplus.dev/guide/
 
 ### Install dependencies
 
 ```bash
 vp i
 ```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
