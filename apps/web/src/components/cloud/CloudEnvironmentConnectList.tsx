@@ -109,7 +109,9 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the HelmCode Connect environment.";
+      cause instanceof Error
+        ? cause.message
+        : "Could not connect the HelmCode Connect environment.";
     const traceId = findErrorTraceId(cause);
     console.error("[helmcode-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({

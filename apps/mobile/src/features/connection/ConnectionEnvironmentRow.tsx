@@ -75,7 +75,10 @@ export function ConnectionEnvironmentRow(props: {
         />
 
         <View className="flex-1 gap-0.5">
-          <Text className="text-base font-helmcode-bold leading-snug text-foreground" numberOfLines={1}>
+          <Text
+            className="text-base font-helmcode-bold leading-snug text-foreground"
+            numberOfLines={1}
+          >
             {props.environment.environmentLabel}
           </Text>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>

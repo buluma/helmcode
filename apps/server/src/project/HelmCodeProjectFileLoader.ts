@@ -63,44 +63,44 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const load: HelmCodeProjectFileLoader["Service"]["load"] = Effect.fn("HelmCodeProjectFileLoader.load")(
-    function* (workspaceRoot) {
-      const filePath = path.join(workspaceRoot, HELMCODE_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.map(Option.some),
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logHelmCodeProjectFileLoadError(
-                  new HelmCodeProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
-      if (Option.isNone(raw)) {
-        return Option.none<HelmCodeProjectFile>();
-      }
-      return yield* decodeHelmCodeProjectFileJson(raw.value).pipe(
-        Effect.map(Option.some),
-        Effect.catchTags({
-          SchemaError: (error) =>
-            logHelmCodeProjectFileLoadError(
-              new HelmCodeProjectFileLoadError({
-                operation: "decode",
-                workspaceRoot,
-                filePath,
-                cause: error,
-              }),
-            ).pipe(Effect.as(Option.none<HelmCodeProjectFile>())),
-        }),
-      );
-    },
-  );
+  const load: HelmCodeProjectFileLoader["Service"]["load"] = Effect.fn(
+    "HelmCodeProjectFileLoader.load",
+  )(function* (workspaceRoot) {
+    const filePath = path.join(workspaceRoot, HELMCODE_PROJECT_FILE_NAME);
+    const raw = yield* fileSystem.readFileString(filePath).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : logHelmCodeProjectFileLoadError(
+                new HelmCodeProjectFileLoadError({
+                  operation: "read",
+                  workspaceRoot,
+                  filePath,
+                  cause: error,
+                }),
+              ).pipe(Effect.as(Option.none<string>())),
+      }),
+    );
+    if (Option.isNone(raw)) {
+      return Option.none<HelmCodeProjectFile>();
+    }
+    return yield* decodeHelmCodeProjectFileJson(raw.value).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        SchemaError: (error) =>
+          logHelmCodeProjectFileLoadError(
+            new HelmCodeProjectFileLoadError({
+              operation: "decode",
+              workspaceRoot,
+              filePath,
+              cause: error,
+            }),
+          ).pipe(Effect.as(Option.none<HelmCodeProjectFile>())),
+      }),
+    );
+  });
 
   return HelmCodeProjectFileLoader.of({ load });
 });

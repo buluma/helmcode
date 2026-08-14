@@ -25,7 +25,9 @@ const makeServerConfigLayer = (
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
   ).pipe(
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "helmcode-auth-bootstrap-test-" })),
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "helmcode-auth-bootstrap-test-" }),
+    ),
   );
 
 const makePairingGrantStoreLayer = (

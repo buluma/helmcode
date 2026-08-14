@@ -51,7 +51,9 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           disabled={props.respondingApprovalId === props.approval.requestId}
           onPress={() => void props.onRespond(props.approval.requestId, "decline")}
         >
-          <Text className="font-helmcode-bold text-sm text-rose-700 dark:text-rose-300">Decline</Text>
+          <Text className="font-helmcode-bold text-sm text-rose-700 dark:text-rose-300">
+            Decline
+          </Text>
         </Pressable>
       </View>
     </View>

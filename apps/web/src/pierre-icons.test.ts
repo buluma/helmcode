@@ -26,7 +26,10 @@ describe("Pierre file icons", () => {
     assert.equal(resolvePierreIconForEntry("AGENTS.md", "file")?.name, "helmcode-file-icon-agents");
     assert.equal(resolvePierreIconForEntry("CLAUDE.md", "file")?.name, "helmcode-file-icon-claude");
     assert.equal(resolvePierreIconForEntry("README.md", "file")?.name, "helmcode-file-icon-readme");
-    assert.equal(resolvePierreIconForEntry("pnpm-lock.yaml", "file")?.name, "helmcode-file-icon-pnpm");
+    assert.equal(
+      resolvePierreIconForEntry("pnpm-lock.yaml", "file")?.name,
+      "helmcode-file-icon-pnpm",
+    );
     assert.equal(
       resolvePierreIconForEntry("pnpm-workspace.yaml", "file")?.name,
       "helmcode-file-icon-pnpm",

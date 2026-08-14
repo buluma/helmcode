@@ -42,7 +42,11 @@ describe("getOnlySelectableProject", () => {
   });
 
   it("does not auto-select a representative when one group has multiple clones", () => {
-    const projects = [makeProject("helmcode"), makeProject("helmcode-2"), makeProject("helmcode-3")];
+    const projects = [
+      makeProject("helmcode"),
+      makeProject("helmcode-2"),
+      makeProject("helmcode-3"),
+    ];
     expect(getOnlySelectableProject([makeScope(projects)])).toBeNull();
   });
 });
@@ -64,7 +68,11 @@ describe("resolveDraftProjectSelection", () => {
   });
 
   it("opens the picker for multiple physical projects in one logical group", () => {
-    const projects = [makeProject("helmcode"), makeProject("helmcode-2"), makeProject("helmcode-3")];
+    const projects = [
+      makeProject("helmcode"),
+      makeProject("helmcode-2"),
+      makeProject("helmcode-3"),
+    ];
     expect(resolveDraftProjectSelection(null, projects, [makeScope(projects)])).toEqual({
       kind: "pick",
     });

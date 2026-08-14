@@ -1534,7 +1534,9 @@ describe("PreviewManager", () => {
   effectIt.effect("reveals only files inside the configured browser artifact directory", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        yield* manager.revealArtifact("/tmp/helmcode/dev/browser-artifacts/browser-screenshot-test.png");
+        yield* manager.revealArtifact(
+          "/tmp/helmcode/dev/browser-artifacts/browser-screenshot-test.png",
+        );
 
         expect(showItemInFolder).toHaveBeenCalledWith(
           "/tmp/helmcode/dev/browser-artifacts/browser-screenshot-test.png",

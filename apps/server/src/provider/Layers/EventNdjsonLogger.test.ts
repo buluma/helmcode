@@ -131,7 +131,9 @@ describe("EventNdjsonLogger", () => {
     "falls back to a global segment when orchestration thread id is missing or invalid",
     () =>
       Effect.gen(function* () {
-        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "helmcode-provider-log-"));
+        const tempDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "helmcode-provider-log-"),
+        );
         const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
 
         try {

@@ -295,7 +295,10 @@ describe("DesktopBackendManager", () => {
         assert.equal(error.entryPath, "/server/bin.mjs");
         assert.equal(error.cwd, "/server");
         assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
-        assert.equal(error.readinessUrl.href, "http://127.0.0.1:3773/.well-known/helmcode/environment");
+        assert.equal(
+          error.readinessUrl.href,
+          "http://127.0.0.1:3773/.well-known/helmcode/environment",
+        );
         assert.equal(error.timeoutMs, 50);
         assert.isDefined(error.cause);
         assert.equal(

@@ -3,7 +3,10 @@ import { assert, it } from "@effect/vitest";
 import { detectCliRunner, formatCliCommand, suggestedPackageSpec } from "./invocation.ts";
 
 it("detects package runners from their cache entry paths", () => {
-  assert.equal(detectCliRunner("/home/theo/.npm/_npx/abc123/node_modules/helmcode/dist/bin.mjs"), "npx");
+  assert.equal(
+    detectCliRunner("/home/theo/.npm/_npx/abc123/node_modules/helmcode/dist/bin.mjs"),
+    "npx",
+  );
   assert.equal(
     detectCliRunner(
       "C:\\Users\\theo\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\helmcode\\dist\\bin.mjs",
@@ -15,7 +18,9 @@ it("detects package runners from their cache entry paths", () => {
     "pnpm dlx",
   );
   assert.equal(
-    detectCliRunner("/home/theo/.local/share/pnpm/.pnpm/dlx/abc/node_modules/helmcode/dist/bin.mjs"),
+    detectCliRunner(
+      "/home/theo/.local/share/pnpm/.pnpm/dlx/abc/node_modules/helmcode/dist/bin.mjs",
+    ),
     "pnpm dlx",
   );
   assert.equal(
@@ -24,8 +29,14 @@ it("detects package runners from their cache entry paths", () => {
     ),
     "pnpm dlx",
   );
-  assert.equal(detectCliRunner("/home/theo/.bun/install/cache/helmcode@0.0.31/dist/bin.mjs"), "bunx");
-  assert.equal(detectCliRunner("/tmp/bunx-1000-helmcode@latest/node_modules/helmcode/dist/bin.mjs"), "bunx");
+  assert.equal(
+    detectCliRunner("/home/theo/.bun/install/cache/helmcode@0.0.31/dist/bin.mjs"),
+    "bunx",
+  );
+  assert.equal(
+    detectCliRunner("/tmp/bunx-1000-helmcode@latest/node_modules/helmcode/dist/bin.mjs"),
+    "bunx",
+  );
   assert.equal(
     detectCliRunner(
       "C:\\Users\\theo\\AppData\\Local\\Temp\\bunx-0-helmcode@latest\\node_modules\\helmcode\\dist\\bin.mjs",
@@ -37,7 +48,9 @@ it("detects package runners from their cache entry paths", () => {
 it("treats stable installs as direct invocations", () => {
   assert.isNull(detectCliRunner("/usr/local/lib/node_modules/helmcode/dist/bin.mjs"));
   assert.isNull(detectCliRunner("/home/theo/Code/work/helmcode/apps/server/dist/bin.mjs"));
-  assert.isNull(detectCliRunner("/home/theo/.helmcode/runtime/0.0.31/node_modules/helmcode/dist/bin.mjs"));
+  assert.isNull(
+    detectCliRunner("/home/theo/.helmcode/runtime/0.0.31/node_modules/helmcode/dist/bin.mjs"),
+  );
   assert.isNull(detectCliRunner(""));
 });
 

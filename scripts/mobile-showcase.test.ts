@@ -103,7 +103,10 @@ it("parses validation-only mode", () => {
 it("selects an explicit CI Android ABI without changing the local default", () => {
   assert.equal(resolveShowcaseAndroidAbi(undefined), "arm64-v8a");
   assert.equal(resolveShowcaseAndroidAbi("x86_64"), "x86_64");
-  assert.throws(() => resolveShowcaseAndroidAbi("mips"), /Unsupported HELMCODE_SHOWCASE_ANDROID_ABI/u);
+  assert.throws(
+    () => resolveShowcaseAndroidAbi("mips"),
+    /Unsupported HELMCODE_SHOWCASE_ANDROID_ABI/u,
+  );
 });
 
 it("uses platform-correct default Android SDK roots", () => {
@@ -246,7 +249,10 @@ it("selects a reachable LAN IPv4 address", () => {
 
 it("maps capture scenes to the real application routes", () => {
   assert.equal(showcaseSceneUrl("threads", "environment-1"), "helmcode://");
-  assert.equal(showcaseSceneUrl("environments", "environment-1"), "helmcode://settings/environments");
+  assert.equal(
+    showcaseSceneUrl("environments", "environment-1"),
+    "helmcode://settings/environments",
+  );
   assert.equal(
     showcaseSceneUrl("thread", "environment-1"),
     "helmcode://threads/environment-1/remote-command-center",

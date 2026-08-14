@@ -8,7 +8,8 @@ export function isTerminalDebugEnabled(): boolean {
   return (
     (typeof __DEV__ !== "undefined" && __DEV__) ||
     (typeof globalThis !== "undefined" &&
-      (globalThis as { __HELMCODE_TERMINAL_DEBUG__?: boolean }).__HELMCODE_TERMINAL_DEBUG__ === true)
+      (globalThis as { __HELMCODE_TERMINAL_DEBUG__?: boolean }).__HELMCODE_TERMINAL_DEBUG__ ===
+        true)
   );
 }
 

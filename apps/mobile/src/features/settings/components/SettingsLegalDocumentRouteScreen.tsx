@@ -122,7 +122,9 @@ export function SettingsLegalDocumentRouteScreen({
             onPress={() => openExternalUrl(documentUrl)}
             className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
           >
-            <Text className="font-helmcode-medium text-base text-foreground-muted">Open in Browser</Text>
+            <Text className="font-helmcode-medium text-base text-foreground-muted">
+              Open in Browser
+            </Text>
           </Pressable>
         </View>
       </View>

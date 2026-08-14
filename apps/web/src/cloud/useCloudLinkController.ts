@@ -51,9 +51,14 @@ export function useCloudLinkController() {
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
-    const message = cause instanceof Error ? cause.message : "Could not update HelmCode Connect access.";
+    const message =
+      cause instanceof Error ? cause.message : "Could not update HelmCode Connect access.";
     const traceId = findErrorTraceId(cause);
-    console.error("[helmcode-connect] Could not update HelmCode Connect", { message, traceId, cause });
+    console.error("[helmcode-connect] Could not update HelmCode Connect", {
+      message,
+      traceId,
+      cause,
+    });
     setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
     toastManager.add({
       type: "error",

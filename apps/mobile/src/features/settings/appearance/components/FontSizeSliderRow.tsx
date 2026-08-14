@@ -146,7 +146,9 @@ export function FontSizeSliderRow(props: {
           weight="regular"
         />
         <Text className="flex-1 text-lg text-foreground">{props.label}</Text>
-        <Text className="text-base font-helmcode-medium text-foreground-muted">{props.valueLabel}</Text>
+        <Text className="text-base font-helmcode-medium text-foreground-muted">
+          {props.valueLabel}
+        </Text>
       </View>
       <View className="flex-row items-center gap-3">
         <SymbolView

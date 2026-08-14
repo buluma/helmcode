@@ -23,9 +23,12 @@ export const orchestrationCommandsTotal = Metric.counter("helmcode_orchestration
   description: "Total orchestration commands dispatched.",
 });
 
-export const orchestrationCommandDuration = Metric.timer("helmcode_orchestration_command_duration", {
-  description: "Orchestration command dispatch duration.",
-});
+export const orchestrationCommandDuration = Metric.timer(
+  "helmcode_orchestration_command_duration",
+  {
+    description: "Orchestration command dispatch duration.",
+  },
+);
 
 export const orchestrationCommandAckDuration = Metric.timer(
   "helmcode_orchestration_command_ack_duration",

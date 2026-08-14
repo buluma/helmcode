@@ -1,4 +1,8 @@
-import { HELMCODE_PROJECT_FILE_NAME, type EnvironmentId, type ThreadEnvMode } from "@helmcode/contracts";
+import {
+  HELMCODE_PROJECT_FILE_NAME,
+  type EnvironmentId,
+  type ThreadEnvMode,
+} from "@helmcode/contracts";
 import { parseHelmCodeProjectFile } from "@helmcode/shared/helmcodeProjectFile";
 import { executeAtomQuery } from "@helmcode/client-runtime/state/runtime";
 

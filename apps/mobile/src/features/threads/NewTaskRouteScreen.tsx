@@ -303,7 +303,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       />
                     </View>
                     <View className="min-w-0 flex-1">
-                      <Text className="text-base leading-snug font-helmcode-bold">{scope.title}</Text>
+                      <Text className="text-base leading-snug font-helmcode-bold">
+                        {scope.title}
+                      </Text>
                       <Text
                         className="text-xs leading-snug text-foreground-muted"
                         ellipsizeMode="middle"

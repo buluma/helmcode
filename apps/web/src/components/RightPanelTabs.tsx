@@ -1,4 +1,8 @@
-import type { ContextMenuItem, PreviewSessionSnapshot, PullRequestState } from "@helmcode/contracts";
+import type {
+  ContextMenuItem,
+  PreviewSessionSnapshot,
+  PullRequestState,
+} from "@helmcode/contracts";
 import { getTerminalLabel } from "@helmcode/shared/terminalLabels";
 import {
   Bot,

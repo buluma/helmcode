@@ -22,9 +22,7 @@ const IPAD_NATIVE_LEADING_TITLE_OFFSET = 7;
 export function brandTitleOffset(nativeLeadingItem: boolean): number {
   if (Platform.OS !== "ios") return 0;
   if (nativeLeadingItem) {
-    return Platform.isPad
-      ? IPAD_NATIVE_LEADING_TITLE_OFFSET
-      : IOS_NATIVE_LEADING_TITLE_OFFSET;
+    return Platform.isPad ? IPAD_NATIVE_LEADING_TITLE_OFFSET : IOS_NATIVE_LEADING_TITLE_OFFSET;
   }
   return Platform.isPad ? IPAD_HOME_TITLE_OFFSET : 0;
 }
@@ -40,9 +38,7 @@ export function CompactBrandTitle(
   const iconColor = useThemeColor("--color-icon");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const subtleColor = useThemeColor("--color-subtle");
-  const stageLabel = resolveMobileStageLabel(
-    Constants.expoConfig?.extra?.appVariant,
-  );
+  const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset(props.nativeLeadingItem === true);
 
   return (

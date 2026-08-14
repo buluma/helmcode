@@ -654,7 +654,9 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
 
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
-    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "helmcode-provider-service-"));
+    const tempDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "helmcode-provider-service-"),
+    );
     const dbPath = NodePath.join(tempDir, "orchestration.sqlite");
 
     const codex = makeFakeCodexAdapter();

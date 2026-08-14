@@ -147,8 +147,8 @@ ssh -L 34338:127.0.0.1:34338 <host>
 
 In **Clerk Dashboard > JWT templates**, create a template with:
 
-| Setting | Value                        |
-| ------- | ---------------------------- |
+| Setting | Value                              |
+| ------- | ---------------------------------- |
 | Name    | `helmcode-relay`                   |
 | Claims  | `{ "aud": "helmcode-code-relay" }` |
 

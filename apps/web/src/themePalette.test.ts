@@ -995,7 +995,9 @@ describe("stored theme preferences", () => {
     // The dark-variant alias keeps its raw form: it still carries a mode hint.
     expect(canonicalThemePreference("helmcode-chat-dark")).toBe("helmcode-chat-dark");
     // A stored mix that predates the rename resolves to the new ids.
-    expect(parseThemeHalves(JSON.stringify({ light: "helmcode-ocean", dark: "helmcode-grove" }))).toEqual({
+    expect(
+      parseThemeHalves(JSON.stringify({ light: "helmcode-ocean", dark: "helmcode-grove" })),
+    ).toEqual({
       light: OCEAN_THEME.id,
       dark: GROVE_THEME.id,
     });

@@ -1683,7 +1683,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? {
                 environment: {
                   ...(options?.environment ?? process.env),
-                  HELMCODE_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  HELMCODE_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(
+                    /^Bearer\s+/,
+                    "",
+                  ),
                 },
                 appServerArgs: [
                   "-c",

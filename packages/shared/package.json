@@ -225,9 +225,9 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@helmcode/contracts": "workspace:*",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
-    "@helmcode/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
     "yaml": "catalog:"

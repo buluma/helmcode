@@ -55,7 +55,9 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "helmcode-provider-cache-invalid-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "helmcode-provider-cache-invalid-",
+      });
       const cachePath = `${tempDir}/provider.json`;
       const secretCacheValue = "secret-cache-value";
       yield* fs.writeFileString(cachePath, `{ "token": "${secretCacheValue}" }`);

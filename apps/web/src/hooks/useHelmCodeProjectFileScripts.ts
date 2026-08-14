@@ -33,7 +33,12 @@ export function useHelmCodeProjectFileState(
   environmentId: EnvironmentId,
   cwd: string | null,
 ): HelmCodeProjectFileState {
-  const query = useProjectFileQuery(environmentId, cwd ?? "", HELMCODE_PROJECT_FILE_NAME, cwd !== null);
+  const query = useProjectFileQuery(
+    environmentId,
+    cwd ?? "",
+    HELMCODE_PROJECT_FILE_NAME,
+    cwd !== null,
+  );
   const contents = query.data && !query.data.truncated ? query.data.contents : null;
   const isPending = query.isPending;
   return useMemo(() => {

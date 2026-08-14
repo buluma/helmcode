@@ -12,7 +12,9 @@ export function EmptyState(props: {
   if (props.variant === "plain") {
     return (
       <View className="items-center px-8 py-8">
-        <Text className="text-center text-xl font-helmcode-bold text-foreground">{props.title}</Text>
+        <Text className="text-center text-xl font-helmcode-bold text-foreground">
+          {props.title}
+        </Text>
         <Text className="mt-2 text-center font-sans text-base leading-normal text-foreground-muted">
           {props.detail}
         </Text>
@@ -41,7 +43,9 @@ export function EmptyState(props: {
           className="mt-4 self-start rounded-full bg-primary px-4 py-2.5 active:opacity-70"
           onPress={props.onAction}
         >
-          <Text className="text-sm font-helmcode-bold text-primary-foreground">{props.actionLabel}</Text>
+          <Text className="text-sm font-helmcode-bold text-primary-foreground">
+            {props.actionLabel}
+          </Text>
         </Pressable>
       ) : null}
     </View>

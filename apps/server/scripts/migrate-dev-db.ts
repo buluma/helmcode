@@ -517,7 +517,9 @@ export const migrateDevDbCommand = Command.make(
     ),
     baseDir: Flag.string("base-dir").pipe(
       Flag.optional,
-      Flag.withDescription("Isolated .helmcode directory. Defaults to the current worktree's .helmcode."),
+      Flag.withDescription(
+        "Isolated .helmcode directory. Defaults to the current worktree's .helmcode.",
+      ),
     ),
     source: Flag.string("source").pipe(
       Flag.optional,

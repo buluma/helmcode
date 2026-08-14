@@ -81,7 +81,9 @@ function makeLayer(input: {
     Layer.provide(
       ServerConfig.layerTest(
         process.cwd(),
-        input.fileSystem ? "/tmp/helmcode-source-control-repos" : { prefix: "helmcode-source-control-repos-" },
+        input.fileSystem
+          ? "/tmp/helmcode-source-control-repos"
+          : { prefix: "helmcode-source-control-repos-" },
       ),
     ),
   );

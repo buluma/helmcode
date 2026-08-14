@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createAssetEnvironmentAtoms, resolveAssetUrl } from "@helmcode/client-runtime/state/assets";
+import {
+  createAssetEnvironmentAtoms,
+  resolveAssetUrl,
+} from "@helmcode/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@helmcode/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 

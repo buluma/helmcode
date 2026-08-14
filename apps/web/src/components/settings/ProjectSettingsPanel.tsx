@@ -483,7 +483,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   // What the "Default" option resolves to while no override is set: the
   // repo's helmcode.json value when present, otherwise the global setting.
   const inheritedEnvMode = helmcodeFile.file?.defaultThreadEnvMode ?? settings.defaultThreadEnvMode;
-  const inheritedEnvModeSource = helmcodeFile.file?.defaultThreadEnvMode != null ? "helmcode.json" : "global";
+  const inheritedEnvModeSource =
+    helmcodeFile.file?.defaultThreadEnvMode != null ? "helmcode.json" : "global";
   const importableScripts = useMemo(
     () =>
       helmcodeFile.scripts.filter(

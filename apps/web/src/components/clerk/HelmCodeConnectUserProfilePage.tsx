@@ -86,8 +86,8 @@ export function HelmCodeConnectEnvironmentRow(props: {
                 “{environment.label}” will be removed from this account.
               </p>
               <p className="mt-4 max-w-xl text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-                HelmCode Connect access will be revoked, any managed tunnel will be removed, and a host
-                space will become available. Local connections on your devices are not changed.
+                HelmCode Connect access will be revoked, any managed tunnel will be removed, and a
+                host space will become available. Local connections on your devices are not changed.
               </p>
               <div className="mt-4 flex justify-end gap-2">
                 <Button
@@ -249,7 +249,8 @@ export function HelmCodeConnectUserProfilePage() {
                 No HelmCode Connect environments
               </EmptyTitle>
               <EmptyDescription className="text-[0.8125rem] leading-[1.125rem]">
-                Link an environment from its local Settings to make it available through HelmCode Connect.
+                Link an environment from its local Settings to make it available through HelmCode
+                Connect.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

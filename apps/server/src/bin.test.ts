@@ -195,7 +195,10 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         assert.fail(`Expected ShowHelp, got ${error._tag}`);
       }
       assert.deepEqual(error.commandPath, ["helmcode", "connect"]);
-      assert.include(error.errors[0]?.message ?? "", "missing HelmCode Connect public configuration");
+      assert.include(
+        error.errors[0]?.message ?? "",
+        "missing HelmCode Connect public configuration",
+      );
 
       const output = (yield* TestConsole.errorLines).join("\n");
       assert.include(output, "ERROR");
@@ -252,7 +255,10 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.include(output, "HelmCode Connect\n  Exposure: disabled");
       assert.include(output, "  Authorization: missing");
       assert.include(output, "  Environment link: not provisioned");
-      assert.include(output, "Next: Run `helmcode connect link` to authorize and enable HelmCode Connect.");
+      assert.include(
+        output,
+        "Next: Run `helmcode connect link` to authorize and enable HelmCode Connect.",
+      );
     }),
   );
 

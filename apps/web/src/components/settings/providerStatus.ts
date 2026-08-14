@@ -39,7 +39,8 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in Helm Code.",
+        provider.message ??
+        "This provider is installed but disabled for new sessions in Helm Code.",
     };
   }
   if (!provider.installed) {

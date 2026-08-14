@@ -33,7 +33,10 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "../ui/sidebar";
-import { HelmCodeConnectSidebarAvatar, HelmCodeConnectSidebarSignIn } from "../clerk/HelmCodeConnectSidebarSignIn";
+import {
+  HelmCodeConnectSidebarAvatar,
+  HelmCodeConnectSidebarSignIn,
+} from "../clerk/HelmCodeConnectSidebarSignIn";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,

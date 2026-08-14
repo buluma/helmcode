@@ -11,7 +11,9 @@ interface NativeKeyboardCommandsProps extends ViewProps, PropsWithChildren {
   ) => void;
 }
 
-const NativeKeyboardCommands = requireNativeView<NativeKeyboardCommandsProps>("HelmCodeKeyboardCommands");
+const NativeKeyboardCommands = requireNativeView<NativeKeyboardCommandsProps>(
+  "HelmCodeKeyboardCommands",
+);
 
 export function HelmCodeKeyboardCommands(
   props: PropsWithChildren<{

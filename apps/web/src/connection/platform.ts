@@ -23,7 +23,10 @@ import {
 } from "@helmcode/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@helmcode/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@helmcode/client-runtime/environment";
-import { managedRelayAccountChanges, managedRelaySessionAtom } from "@helmcode/client-runtime/relay";
+import {
+  managedRelayAccountChanges,
+  managedRelaySessionAtom,
+} from "@helmcode/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@helmcode/client-runtime/rpc";
 import {
   AuthStandardClientScopes,

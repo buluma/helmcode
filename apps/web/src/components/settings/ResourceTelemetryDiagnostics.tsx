@@ -1014,14 +1014,20 @@ export function ResourceTelemetryDiagnostics() {
               icon={<CpuIcon className="size-3.5" />}
               label="Current CPU"
               value={allHelmCode ? `${allHelmCode.currentCpuPercent.toFixed(1)}%` : "..."}
-              detail={allHelmCode ? `${formatCpuTime(allHelmCode.cpuTimeMs)} observed CPU time` : undefined}
+              detail={
+                allHelmCode
+                  ? `${formatCpuTime(allHelmCode.cpuTimeMs)} observed CPU time`
+                  : undefined
+              }
             />
             <IconStat
               icon={<MemoryStickIcon className="size-3.5" />}
               label="Resident memory"
               value={allHelmCode ? formatBytes(allHelmCode.currentRssBytes) : "..."}
               detail={
-                allHelmCode ? `${formatBytes(allHelmCode.peakRssBytes)} combined process peaks` : undefined
+                allHelmCode
+                  ? `${formatBytes(allHelmCode.peakRssBytes)} combined process peaks`
+                  : undefined
               }
             />
             <IconStat
@@ -1029,7 +1035,9 @@ export function ResourceTelemetryDiagnostics() {
               label="Process count"
               value={allHelmCode ? String(allHelmCode.processCount) : "..."}
               detail={
-                allHelmCode ? `${allHelmCode.processStarts} starts · ${allHelmCode.processExits} exits` : undefined
+                allHelmCode
+                  ? `${allHelmCode.processStarts} starts · ${allHelmCode.processExits} exits`
+                  : undefined
               }
             />
             <IconStat
@@ -1281,8 +1289,8 @@ export function ResourceTelemetryDiagnostics() {
         <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)]">
           <div className="bg-muted/15 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground sm:px-5">
             Native counters identify which process is reading or writing. These application-level
-            counters identify known HelmCode operations so process spikes can be correlated with specific
-            persistence and logging paths.
+            counters identify known HelmCode operations so process spikes can be correlated with
+            specific persistence and logging paths.
           </div>
           <AttributionTable entries={snapshot?.attribution.entries ?? []} />
         </div>

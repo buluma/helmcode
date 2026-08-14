@@ -13,7 +13,10 @@ import {
   Connectivity,
   Wakeups,
 } from "@helmcode/client-runtime/connection";
-import { managedRelayAccountChanges, managedRelaySessionAtom } from "@helmcode/client-runtime/relay";
+import {
+  managedRelayAccountChanges,
+  managedRelaySessionAtom,
+} from "@helmcode/client-runtime/relay";
 import { AuthStandardClientScopes } from "@helmcode/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

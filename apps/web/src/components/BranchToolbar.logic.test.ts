@@ -100,9 +100,9 @@ describe("resolvePreviousWorktreeSeed", () => {
 
 describe("resolvePreviousWorktreeLabel", () => {
   it("includes the branch when known", () => {
-    expect(resolvePreviousWorktreeLabel({ branch: "helmcode/fix-thing", worktreePath: "/wt" })).toBe(
-      "Previous worktree (helmcode/fix-thing)",
-    );
+    expect(
+      resolvePreviousWorktreeLabel({ branch: "helmcode/fix-thing", worktreePath: "/wt" }),
+    ).toBe("Previous worktree (helmcode/fix-thing)");
     expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
       "Previous worktree",
     );
@@ -489,7 +489,9 @@ describe("resolveCurrentWorkspaceLabel", () => {
   });
 
   it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.helmcode/worktrees/feature-a")).toBe("Current worktree");
+    expect(resolveCurrentWorkspaceLabel("/repo/.helmcode/worktrees/feature-a")).toBe(
+      "Current worktree",
+    );
   });
 });
 
