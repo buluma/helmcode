@@ -566,9 +566,11 @@ jobs:
       # delete the secret and publishing falls back to the OIDC flow
       # (id-token: write above) automatically.
       - name: Configure npm auth (bootstrap token)
-        if: ${{ secrets.NPM_TOKEN != '' }}
         shell: bash
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
+        run: |
+          if [[ -n "${NPM_TOKEN:-}" ]]; then
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
+          fi
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
