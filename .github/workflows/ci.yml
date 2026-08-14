@@ -113,7 +113,7 @@ jobs:
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
     runs-on: macos-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
