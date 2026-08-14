@@ -2171,6 +2171,12 @@ label:has(> select#reasoning-effort) select {
   [data-slot="skeleton"]::after {
     content: none;
   }
+  .ultrathink-frame::before,
+  .ultrathink-chroma,
+  .ultrathink-pill,
+  .ultrathink-word {
+    animation: none;
+  }
 }
 
 @keyframes provider-update-pill-countdown {
