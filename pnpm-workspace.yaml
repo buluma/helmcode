@@ -52,6 +52,10 @@ catalog:
   vite-plus: 0.2.2
   yaml: ^2.9.0
 
+# Quarantine newly published versions for a day before pnpm will install them,
+# to leave a window for supply-chain compromises to be caught and yanked.
+minimumReleaseAge: 1440
+
 minimumReleaseAgeExclude:
   - "@clerk/backend@3.14.0"
   - "@clerk/clerk-js@6.25.13"
