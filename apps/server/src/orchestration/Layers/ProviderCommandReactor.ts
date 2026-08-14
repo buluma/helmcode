@@ -27,6 +27,7 @@ import { makeDrainableWorker } from "@helmcode/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -488,7 +489,13 @@ const make = Effect.gen(function* () {
   ) {
     const thread = yield* resolveThread(threadId);
     if (!thread) {
-      return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
+      // Plausible under a race (e.g. the thread was deleted between the
+      // command that produced this intent and this reactor processing it),
+      // not a programmer error, so it is a typed failure rather than a die.
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: "ensureSessionForThread",
+        detail: `Thread '${threadId}' was not found in read model.`,
+      });
     }
 
     const desiredRuntimeMode = thread.runtimeMode;
@@ -742,9 +749,13 @@ const make = Effect.gen(function* () {
   }) {
     const thread = yield* resolveThread(input.threadId);
     if (!thread) {
-      return yield* Effect.die(
-        new Error(`Thread '${input.threadId}' was not found in read model.`),
-      );
+      // Plausible under a race (e.g. the thread was deleted between the
+      // command that produced this intent and this reactor processing it),
+      // not a programmer error, so it is a typed failure rather than a die.
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: "buildSendTurnRequestForThread",
+        detail: `Thread '${input.threadId}' was not found in read model.`,
+      });
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
