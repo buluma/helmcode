@@ -503,8 +503,12 @@ jobs:
 
   publish_cli:
     name: Publish CLI to npm
+    # Runs independent of relay/Clerk availability: this fork doesn't run a
+    # hosted relay, and the CLI's cloud-sync features degrade gracefully
+    # without HELMCODE_CLERK_*/HELMCODE_RELAY_URL baked in (see
+    # apps/server/src/cloud/publicConfig.ts). Only preflight/build gate this.
     needs: [preflight, relay_public_config, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.relay_public_config.outputs.available == 'true' && needs.build.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04 # ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -536,19 +540,37 @@ jobs:
               - --filter=@helmcode/web...
               - --filter=@helmcode/scripts...
 
+      # Only present when relay_public_config actually ran the relay/Clerk
+      # steps (available == 'true'). Skipped on forks without hosted relay
+      # infra — npm publish must not depend on it.
       - name: Download relay client tracing config
+        if: needs.relay_public_config.outputs.available == 'true'
         uses: actions/download-artifact@v8
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
 
       - name: Load relay client tracing config
+        if: needs.relay_public_config.outputs.available == 'true'
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
           tracing_token="$(sed -n 's/^HELMCODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
           echo "::add-mask::$tracing_token"
           cat "$config_path" >> "$GITHUB_ENV"
+
+      # Bootstrap only: npm's OIDC trusted publisher can't be configured
+      # until the package exists on the registry, so the very first publish
+      # needs a classic token. Add NPM_TOKEN as a repo secret to use this;
+      # once npmjs.com has a trusted publisher configured for this workflow,
+      # delete the secret and publishing falls back to the OIDC flow
+      # (id-token: write above) automatically.
+      - name: Configure npm auth (bootstrap token)
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        shell: bash
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
