@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import { PROVIDER_SPAWN_RETRY_SCHEDULE } from "./providerSpawnRetry.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@helmcode/shared/Net";
 import { HostProcessPlatform } from "@helmcode/shared/hostProcess";
@@ -474,6 +475,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         )
         .pipe(
           Effect.provideService(Scope.Scope, runtimeScope),
+          Effect.retry(PROVIDER_SPAWN_RETRY_SCHEDULE),
           Effect.mapError(
             (cause) =>
               new OpenCodeRuntimeError({

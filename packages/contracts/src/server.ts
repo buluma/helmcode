@@ -171,6 +171,11 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  // Whether this driver emits task.progress (multi-agent workflow member)
+  // events, so the UI can render (or hide) the workflow card per-provider
+  // instead of the feature just silently doing nothing on unsupported
+  // drivers. Only Claude and Codex set this true today.
+  supportsMultiAgentWorkflow: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),

@@ -1,5 +1,12 @@
+import {
+  type EnvironmentId,
+  type ExecutionEnvironmentCapabilities,
+  type ServerConfig,
+} from "@helmcode/contracts";
 import * as Crypto from "effect/Crypto";
-import { Atom } from "effect/unstable/reactivity";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
 import {
@@ -69,8 +76,26 @@ export type {
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
+/**
+ * Rejected when a command gated by a capability flag (see
+ * `ExecutionEnvironmentCapabilities`) is sent to an environment whose server
+ * config is known and does not advertise that capability. This is a backstop
+ * against version skew: UI should already hide the affected action, but this
+ * catches any caller that forgets to check, on any platform, before the RPC
+ * ever leaves the client.
+ */
+export class ThreadCommandUnsupportedError extends Schema.TaggedErrorClass<ThreadCommandUnsupportedError>()(
+  "ThreadCommandUnsupportedError",
+  {
+    environmentId: Schema.String,
+    command: Schema.String,
+    capability: Schema.String,
+  },
+) {}
+
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  configValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
@@ -78,6 +103,30 @@ export function createThreadEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
+  // Guards a capability-gated command: reads the environment's last-known
+  // server config out of the atom registry (no RPC of its own) and, only when
+  // that config is present and explicitly lacks the capability, fails before
+  // dispatching. A config we haven't loaded yet is not evidence of an
+  // unsupported server, so it does not block the call.
+  function requireCapability<Input, A, Err, Rx>(
+    capability: keyof ExecutionEnvironmentCapabilities,
+    command: string,
+    execute: (input: Input) => Effect.Effect<A, Err, Rx>,
+  ): (
+    input: Input,
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<A, Err | ThreadCommandUnsupportedError, Rx> {
+    return (input, registry, environmentId) => {
+      const config = registry.get(configValueAtom(environmentId));
+      if (config !== null && config.environment.capabilities[capability] !== true) {
+        return Effect.fail(
+          new ThreadCommandUnsupportedError({ environmentId, command, capability }),
+        );
+      }
+      return execute(input);
+    };
+  }
   return {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
@@ -105,43 +154,61 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     settle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:settle",
-      execute: (input: SettleThreadInput) => settleThread(input),
+      execute: requireCapability("threadSettlement", "thread.settle", (input: SettleThreadInput) =>
+        settleThread(input),
+      ),
       scheduler,
       concurrency,
     }),
     unsettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsettle",
-      execute: (input: UnsettleThreadInput) => unsettleThread(input),
+      execute: requireCapability(
+        "threadSettlement",
+        "thread.unsettle",
+        (input: UnsettleThreadInput) => unsettleThread(input),
+      ),
       scheduler,
       concurrency,
     }),
     snooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:snooze",
-      execute: (input: SnoozeThreadInput) => snoozeThread(input),
+      execute: requireCapability("threadSnooze", "thread.snooze", (input: SnoozeThreadInput) =>
+        snoozeThread(input),
+      ),
       scheduler,
       concurrency,
     }),
     unsnooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsnooze",
-      execute: (input: UnsnoozeThreadInput) => unsnoozeThread(input),
+      execute: requireCapability("threadSnooze", "thread.unsnooze", (input: UnsnoozeThreadInput) =>
+        unsnoozeThread(input),
+      ),
       scheduler,
       concurrency,
     }),
     pin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:pin",
-      execute: (input: PinThreadInput) => pinThread(input),
+      execute: requireCapability("threadPinning", "thread.pin", (input: PinThreadInput) =>
+        pinThread(input),
+      ),
       scheduler,
       concurrency,
     }),
     unpin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unpin",
-      execute: (input: UnpinThreadInput) => unpinThread(input),
+      execute: requireCapability("threadPinning", "thread.unpin", (input: UnpinThreadInput) =>
+        unpinThread(input),
+      ),
       scheduler,
       concurrency,
     }),
     reorderPin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-pin",
-      execute: (input: ReorderPinnedThreadInput) => reorderPinnedThread(input),
+      execute: requireCapability(
+        "threadPinReorder",
+        "thread.pin.reorder",
+        (input: ReorderPinnedThreadInput) => reorderPinnedThread(input),
+      ),
       scheduler,
       concurrency,
     }),
