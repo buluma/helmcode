@@ -39,6 +39,8 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import { PROVIDER_SPAWN_RETRY_SCHEDULE } from "../providerSpawnRetry.ts";
+import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -849,7 +851,7 @@ export const makeCodexSessionRuntime = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
-    const events = yield* Queue.unbounded<ProviderEvent>();
+    const events = yield* Queue.bounded<ProviderEvent>(PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY);
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
@@ -885,6 +887,7 @@ export const makeCodexSessionRuntime = (
       )
       .pipe(
         Effect.provideService(Scope.Scope, runtimeScope),
+        Effect.retry(PROVIDER_SPAWN_RETRY_SCHEDULE),
         Effect.mapError(
           (cause) =>
             new CodexErrors.CodexAppServerSpawnError({
@@ -901,7 +904,9 @@ export const makeCodexSessionRuntime = (
     const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
-    const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
+    const serverNotifications = yield* Queue.bounded<CodexServerNotification>(
+      PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+    );
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = (purpose: CodexErrors.CodexAppServerIdentifierPurpose) =>
       crypto.randomUUIDv4.pipe(

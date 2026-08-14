@@ -94,6 +94,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -1656,7 +1657,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.bounded<ProviderRuntimeEvent>(
+    PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+  );
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(

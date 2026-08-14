@@ -21,6 +21,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@helmcode/shared/shell";
 
+import { PROVIDER_SPAWN_RETRY_SCHEDULE } from "../providerSpawnRetry.ts";
+import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -277,7 +279,9 @@ export const make = (
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
-    const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
+    const eventQueue = yield* Queue.bounded<AcpSessionRuntimeEvent>(
+      PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+    );
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
@@ -344,6 +348,7 @@ export const make = (
       )
       .pipe(
         Effect.provideService(Scope.Scope, runtimeScope),
+        Effect.retry(PROVIDER_SPAWN_RETRY_SCHEDULE),
         Effect.mapError(
           (cause) =>
             new EffectAcpErrors.AcpSpawnError({
@@ -827,7 +832,7 @@ function sessionConfigOptionsFromSetup(
   return response?.configOptions ?? [];
 }
 
-function configOptionCurrentValueMatches(
+export function configOptionCurrentValueMatches(
   configOption: EffectAcpSchema.SessionConfigOption,
   value: string | boolean,
 ): boolean {
@@ -913,7 +918,10 @@ const handleSessionUpdate = ({
     }
   });
 
-function updateModeState(modeState: AcpSessionModeState, nextModeId: string): AcpSessionModeState {
+export function updateModeState(
+  modeState: AcpSessionModeState,
+  nextModeId: string,
+): AcpSessionModeState {
   const normalized = nextModeId.trim();
   if (!normalized) {
     return modeState;
@@ -926,7 +934,7 @@ function updateModeState(modeState: AcpSessionModeState, nextModeId: string): Ac
     : modeState;
 }
 
-function shouldEmitToolCallUpdate(
+export function shouldEmitToolCallUpdate(
   previous: AcpToolCallState | undefined,
   next: AcpToolCallState,
 ): boolean {
@@ -939,7 +947,7 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, runtimeId: string, segmentIndex: number) =>
+export const assistantItemId = (sessionId: string, runtimeId: string, segmentIndex: number) =>
   `assistant:${sessionId}:runtime:${runtimeId}:segment:${segmentIndex}`;
 
 const ensureActiveAssistantSegment = ({
