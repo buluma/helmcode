@@ -791,6 +791,43 @@ jobs:
           git commit -m "chore(release): bump base version to $RELEASED_VERSION after stable release"
           git push origin HEAD:main
 
+  # Nightly releases ship full desktop binaries every ~3 hours with nothing
+  # ever cleaning them up — left alone, the GitHub Releases page grows
+  # unbounded and becomes unusable. Keeps the newest 14 (~2 days at this
+  # cadence) and deletes older nightly releases + their tags. Stable releases
+  # and npm nightly versions are untouched (npm has no version-expiry
+  # mechanism and leaving old nightlies published there is normal practice).
+  prune_old_nightlies:
+    name: Prune old nightly releases
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete nightly releases beyond retention
+        shell: bash
+        run: |
+          set -euo pipefail
+          keep=14
+          mapfile -t tags < <(gh release list --limit 1000 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | test("-nightly\\."))] | sort_by(.createdAt) | reverse | .[].tagName')
+          total=${#tags[@]}
+          if (( total <= keep )); then
+            echo "Only $total nightly release(s); nothing to prune (keeping newest $keep)."
+            exit 0
+          fi
+          to_delete=("${tags[@]:$keep}")
+          echo "Pruning ${#to_delete[@]} nightly release(s) beyond the newest $keep."
+          for tag in "${to_delete[@]}"; do
+            echo "Deleting release + tag: $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done
+
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
