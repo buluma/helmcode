@@ -120,6 +120,84 @@ jobs:
       - name: Lint mobile native sources
         run: vp run lint:mobile
 
+  # apps/server/package.json declares support for Node ^22.16 || ^23.11 ||
+  # >=24.10, but every other job here pins the single Node version root's own
+  # engines field requires for the build tooling (vp, tsgo) — that range is
+  # never actually exercised. Builds the published CLI once under the
+  # standard toolchain version, then smoke-tests the resulting tarball's
+  # install + boot on the floor of each declared range, on bare Node with no
+  # workspace tooling involved (avoids the tooling-vs-published engines
+  # mismatch entirely).
+  cli_build:
+    name: Build CLI package for compat smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=helmcode...
+              - --filter=@helmcode/web...
+
+      - name: Build web package
+        run: vp run --filter @helmcode/web build
+
+      - name: Build CLI package
+        run: vp run --filter helmcode build
+
+      - name: Pack CLI tarball
+        run: node apps/server/scripts/cli.ts pack --out-dir "$RUNNER_TEMP/cli-tarball" --verbose
+
+      - name: Upload CLI tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: helmcode-cli-tarball
+          path: ${{ runner.temp }}/cli-tarball/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  cli_node_compat:
+    name: CLI Node compat (${{ matrix.node }})
+    needs: cli_build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Floor of each range apps/server/package.json declares support for.
+        node: ["22.16.0", "23.11.0", "24.10.0"]
+    steps:
+      - name: Download CLI tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: helmcode-cli-tarball
+          path: ${{ runner.temp }}/cli-tarball
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install and boot the packed CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g "$RUNNER_TEMP"/cli-tarball/*.tgz
+          helmcode --version
+          helmcode --help
+
   release_smoke:
     name: Release Smoke
     runs-on: ubuntu-latest
