@@ -688,6 +688,11 @@ jobs:
             fi
           done
 
+      # GH_PAT (a fine-grained/classic PAT with Contents: write) overrides the
+      # default GITHUB_TOKEN — softprops/action-gh-release kept returning 403
+      # "Resource not accessible by integration" even with contents: write set
+      # both here and at the repo's default-workflow-permissions level, so
+      # falling back to a real PAT until that's root-caused.
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
@@ -706,7 +711,7 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
-          token: ${{ github.token }}
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
@@ -725,7 +730,7 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
-          token: ${{ github.token }}
+          token: ${{ secrets.GH_PAT || github.token }}
 
   # Keeps the "current base version" (apps/desktop/package.json, the single
   # source scripts/resolve-nightly-release.ts reads) one step ahead of the
