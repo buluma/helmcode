@@ -1,10 +1,13 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-      - "!v*-nightly.*"
+  # No push: tags: trigger. Every release path here (workflow_dispatch and
+  # both schedule cadences) creates the release tag itself as a side effect
+  # of publishing (softprops/action-gh-release), which would otherwise
+  # self-trigger a second run on the same tag — build succeeds again but
+  # `npm publish`/the GitHub Release both correctly reject republishing a
+  # version that already exists, showing a spurious failed run next to every
+  # real one. Nothing in this flow relies on a manually pushed tag anymore.
   schedule:
     - cron: "0 */3 * * *" # nightly
     - cron: "0 0 * * 1" # stable, weekly (Monday 00:00 UTC)
