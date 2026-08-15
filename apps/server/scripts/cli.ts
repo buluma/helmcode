@@ -253,10 +253,19 @@ const publishCmd = Command.make(
               workspaceCatalog,
               "apps/server",
             ),
-            overrides: resolveCatalogDependencies(
-              workspaceOverrides,
-              workspaceCatalog,
-              "apps/server",
+            // The workspace overrides map is pnpm-flavored and workspace-wide:
+            // `"parent>child"` selector keys and `"-"` ("remove this dependency")
+            // values are pnpm-only syntax that plain `npm publish` rejects
+            // outright (EINVALIDPACKAGENAME on the `>`). None of those entries
+            // apply to apps/server's own dependency tree anyway (they target
+            // Clerk/Expo/vitest transitives this package doesn't have) — only
+            // plain `"name": "version"` pins (e.g. effect, @effect/platform-*)
+            // matter here, to keep this package's own tree deduplicated against
+            // a single resolved version.
+            overrides: Object.fromEntries(
+              Object.entries(
+                resolveCatalogDependencies(workspaceOverrides, workspaceCatalog, "apps/server"),
+              ).filter(([name, spec]) => !name.includes(">") && spec !== "-"),
             ),
           };
 
