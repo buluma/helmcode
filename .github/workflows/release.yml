@@ -6,7 +6,8 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
   schedule:
-    - cron: "0 */3 * * *"
+    - cron: "0 */3 * * *" # nightly
+    - cron: "0 0 * * 1" # stable, weekly (Monday 00:00 UTC)
   workflow_dispatch:
     inputs:
       channel:
@@ -28,11 +29,12 @@ permissions:
 
 jobs:
   check_changes:
-    name: Check for changes since last nightly
+    name: Check for changes since last release
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}
+      channel: ${{ steps.channel.outputs.channel }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,24 +45,42 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - id: check
-        name: Compare HEAD to last nightly tag
+      - id: channel
+        name: Resolve channel for this schedule trigger
         run: |
-          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
-          if [[ -z "$last_nightly_tag" ]]; then
-            echo "No previous nightly tag found. Proceeding with release."
+          # `github.event.schedule` carries the exact cron expression that fired,
+          # letting one workflow serve both cadences in `on.schedule` above.
+          if [[ "${{ github.event.schedule }}" == "0 0 * * 1" ]]; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=nightly" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: check
+        name: Compare HEAD to last release tag on this channel
+        run: |
+          if [[ "${{ steps.channel.outputs.channel }}" == "stable" ]]; then
+            last_tag=$(git tag --list 'v*.*.*' | grep -vE -- '-nightly\.' | sort -V | tail -n 1)
+            label="stable"
+          else
+            last_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
+            label="nightly"
+          fi
+
+          if [[ -z "$last_tag" ]]; then
+            echo "No previous $label tag found. Proceeding with release."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          last_nightly_sha=$(git rev-parse "$last_nightly_tag^{commit}")
+          last_sha=$(git rev-parse "$last_tag^{commit}")
           head_sha=$(git rev-parse HEAD)
 
-          if [[ "$last_nightly_sha" == "$head_sha" ]]; then
-            echo "No changes on main since last nightly release ($last_nightly_tag). Skipping."
+          if [[ "$last_sha" == "$head_sha" ]]; then
+            echo "No changes on main since last $label release ($last_tag). Skipping."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Changes detected on main since $last_nightly_tag ($last_nightly_sha → $head_sha). Proceeding."
+            echo "Changes detected on main since $last_tag ($last_sha → $head_sha). Proceeding."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -113,7 +133,18 @@ jobs:
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
+          # Three trigger shapes feed this: workflow_dispatch (explicit channel input),
+          # push of a v*.*.* tag (always stable), and schedule (channel decided by
+          # which cron fired — see check_changes' `channel` output above).
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            channel="${{ needs.check_changes.outputs.channel }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            channel="${DISPATCH_CHANNEL:-stable}"
+          else
+            channel="stable"
+          fi
+
+          if [[ "$channel" == "nightly" ]]; then
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
@@ -133,6 +164,14 @@ jobs:
                 echo "workflow_dispatch stable releases require the version input." >&2
                 exit 1
               fi
+            elif [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+              # Scheduled stable release: same "current base version + 1 patch"
+              # computation nightly uses for its target, just without the
+              # -nightly.<date>.<run> suffix. apps/desktop/package.json is the
+              # single source of truth for this (see scripts/resolve-nightly-release.ts).
+              base_version="$(node -p "require('./apps/desktop/package.json').version")"
+              IFS='.' read -r major minor patch <<< "$base_version"
+              raw="v${major}.${minor}.$((patch + 1))"
             else
               raw="${GITHUB_REF_NAME}"
             fi
@@ -687,6 +726,62 @@ jobs:
             release-assets/*.yml
           fail_on_unmatched_files: true
           token: ${{ github.token }}
+
+  # Keeps the "current base version" (apps/desktop/package.json, the single
+  # source scripts/resolve-nightly-release.ts reads) one step ahead of the
+  # release that just shipped, so the next nightly and the next scheduled
+  # stable release both compute forward from here instead of re-releasing
+  # the same version. Runs after every stable release regardless of trigger
+  # (workflow_dispatch or the weekly schedule) — never for nightly.
+  bump_base_version:
+    name: Bump base version after stable release
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Bump package.json versions to released version
+        shell: bash
+        env:
+          RELEASED_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          current="$(node -p "require('./apps/desktop/package.json').version")"
+          if [[ "$current" == "$RELEASED_VERSION" ]]; then
+            echo "apps/desktop/package.json already at $RELEASED_VERSION; nothing to bump."
+            exit 0
+          fi
+
+          node -e "
+            const fs = require('node:fs');
+            for (const path of [
+              'apps/server/package.json',
+              'apps/desktop/package.json',
+              'apps/web/package.json',
+              'packages/contracts/package.json',
+            ]) {
+              const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+              pkg.version = process.env.RELEASED_VERSION;
+              fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+            }
+          "
+
+          git config user.name "helmcode-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+          git commit -m "chore(release): bump base version to $RELEASED_VERSION after stable release"
+          git push origin HEAD:main
 
   deploy_web:
     name: Deploy hosted web app
