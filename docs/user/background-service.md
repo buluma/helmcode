@@ -5,6 +5,10 @@ boots and keeps running after you log out.
 
 ## Manage the Service
 
+> [!NOTE]
+> This fork hasn't cut a stable release yet, so the `latest` npm dist-tag is frozen on an old
+> build. Use `@nightly` instead of `@latest` in the commands below until a stable channel exists.
+
 Install it with the latest Helm Code release:
 
 ```sh

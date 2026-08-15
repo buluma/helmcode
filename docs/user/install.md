@@ -14,10 +14,22 @@ Download the latest release from
 [GitHub Releases](https://github.com/buluma/helmcode/releases): a `.dmg` for macOS, `.exe`
 installer for Windows, or `.AppImage` for Linux.
 
-`npx helmcode@latest` and package-registry installs (`winget`, Homebrew, AUR) are not available on
-this fork — those require a published npm package and separate registry submissions that don't
-exist here. Build and run from source instead if you want the server-only path; see
-[CONTRIBUTING.md](../../CONTRIBUTING.md).
+## CLI / npm
+
+The server-only path is published to npm as [`helmcode`](https://www.npmjs.com/package/helmcode):
+
+```bash
+npx helmcode@nightly
+```
+
+Nightly builds publish under the `nightly` dist-tag on a ~3-hour cadence; the `latest` tag isn't
+claimed by a stable release yet, so pin `@nightly` explicitly rather than relying on the default.
+`npm install -g helmcode@nightly` works the same way if you'd rather have it on `PATH` than
+re-fetch via `npx` each time.
+
+Package-registry installs (`winget`, Homebrew, AUR) still aren't set up on this fork — those need
+separate submissions to each registry that don't exist here yet. Build and run from source instead
+if you want to skip npm entirely; see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Providers
 
