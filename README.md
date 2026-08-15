@@ -28,7 +28,17 @@ The goal was something performant, remote-ready, and truly open — open enough 
 
 This fork publishes raw desktop binaries (dmg/exe/AppImage) to [GitHub Releases](https://github.com/buluma/helmcode/releases). Download the latest one for your platform there.
 
-`npx helmcode@latest` and package-registry installs (`winget`, Homebrew, AUR) are not set up on this fork — those need a published npm package and separate submissions to each registry, none of which exist here yet. Run from source instead if you want the "install-free" server-only path; see the contributing section below.
+### CLI / npm
+
+The server-only path is published to npm as [`helmcode`](https://www.npmjs.com/package/helmcode):
+
+```bash
+npx helmcode@nightly
+```
+
+Nightly builds publish under the `nightly` dist-tag on a ~3-hour cadence; `latest` isn't claimed by a stable release yet, so pin `@nightly` explicitly. `npm install -g helmcode@nightly` works the same way if you want it on `PATH` instead of re-fetching via `npx` each time.
+
+Package-registry installs (`winget`, Homebrew, AUR) are still not set up on this fork — those need separate submissions to each registry, none of which exist here yet. Run from source instead if you want to skip npm entirely; see the contributing section below.
 
 ## Some notes
 
