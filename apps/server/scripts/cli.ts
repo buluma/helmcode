@@ -31,6 +31,10 @@ import {
 
 interface PackageJson {
   name: string;
+  description: string;
+  keywords: string[];
+  homepage: string;
+  license: string;
   repository: {
     type: string;
     url: string;
@@ -243,6 +247,10 @@ const publishCmd = Command.make(
           const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
             name: serverPackageJson.name,
+            description: serverPackageJson.description,
+            keywords: serverPackageJson.keywords,
+            homepage: serverPackageJson.homepage,
+            license: serverPackageJson.license,
             repository: serverPackageJson.repository,
             bin: serverPackageJson.bin,
             type: serverPackageJson.type,

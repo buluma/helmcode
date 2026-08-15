@@ -1,6 +1,9 @@
 {
   "name": "helmcode",
   "version": "0.0.33",
+  "description": "Server-only CLI for Helm Code — drive coding-agent CLIs (Claude Code, Codex, Cursor, Grok Build, OpenCode) from a web, desktop, or mobile client.",
+  "keywords": ["helmcode", "agent", "cli", "claude", "codex", "cursor", "ai"],
+  "homepage": "https://github.com/buluma/helmcode#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
