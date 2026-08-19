@@ -3,11 +3,22 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  NvidiaSettings,
   OpenCodeSettings,
+  OpenRouterSettings,
   ProviderDriverKind,
 } from "@helmcode/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  type Icon,
+  NvidiaIcon,
+  OpenAI,
+  OpenCodeIcon,
+  OpenRouterIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -66,6 +77,18 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("nvidia"),
+    label: "NVIDIA",
+    icon: NvidiaIcon,
+    settingsSchema: NvidiaSettings,
+  },
+  {
+    value: ProviderDriverKind.make("openrouter"),
+    label: "OpenRouter",
+    icon: OpenRouterIcon,
+    settingsSchema: OpenRouterSettings,
   },
 ];
 
