@@ -1807,7 +1807,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "codex",
                 "cursor",
                 "grok",
+                "nvidia",
                 "opencode",
+                "openrouter",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
