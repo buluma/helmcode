@@ -75,14 +75,17 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         messages: payload.messages,
         temperature: 0.2,
       });
-      const bodyText = bodyEncoded._tag === "Failure"
-        ? yield* Effect.fail(new ProviderAdapterRequestError({
-            provider: NVIDIA,
-            method: "chat.completions",
-            detail: "Failed to encode request body.",
-            cause: bodyEncoded.cause,
-          }))
-        : bodyEncoded.value;
+      const bodyText =
+        bodyEncoded._tag === "Failure"
+          ? yield* Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: NVIDIA,
+                method: "chat.completions",
+                detail: "Failed to encode request body.",
+                cause: bodyEncoded.cause,
+              }),
+            )
+          : bodyEncoded.value;
 
       const request = HttpClientRequest.post(
         `${input.baseUrl.replace(/\/$/, "")}/chat/completions`,

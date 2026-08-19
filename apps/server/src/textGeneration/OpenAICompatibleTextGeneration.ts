@@ -75,7 +75,6 @@ const callChatCompletions = (
   httpClient: HttpClient.HttpClient,
 ): Effect.Effect<Record<string, unknown>, OpenAICompatibleTextGenerationRequestError> =>
   Effect.gen(function* () {
-
     const bodyEncoded = encodeJsonStringExit({
       model: payload.model,
       messages: payload.messages,
@@ -233,15 +232,19 @@ export const makeOpenAICompatibleTextGeneration = Effect.fn("makeOpenAICompatibl
             policy: commitInput.policy,
           });
 
-          const raw = yield* callChatCompletions(input, {
-            model: commitInput.modelSelection?.model ?? input.defaultModel,
-            messages: [
-              {
-                role: "user",
-                content: prompt.prompt,
-              },
-            ],
-          }, httpClient);
+          const raw = yield* callChatCompletions(
+            input,
+            {
+              model: commitInput.modelSelection?.model ?? input.defaultModel,
+              messages: [
+                {
+                  role: "user",
+                  content: prompt.prompt,
+                },
+              ],
+            },
+            httpClient,
+          );
 
           const decoded = yield* processTextGeneratorResult(
             "generateCommitMessage",
@@ -278,10 +281,14 @@ export const makeOpenAICompatibleTextGeneration = Effect.fn("makeOpenAICompatibl
             policy: prInput.policy,
           });
 
-          const raw = yield* callChatCompletions(input, {
-            model: prInput.modelSelection?.model ?? input.defaultModel,
-            messages: [{ role: "user", content: prompt.prompt }],
-          }, httpClient);
+          const raw = yield* callChatCompletions(
+            input,
+            {
+              model: prInput.modelSelection?.model ?? input.defaultModel,
+              messages: [{ role: "user", content: prompt.prompt }],
+            },
+            httpClient,
+          );
 
           const decoded = yield* processTextGeneratorResult(
             "generatePrContent",
@@ -312,10 +319,14 @@ export const makeOpenAICompatibleTextGeneration = Effect.fn("makeOpenAICompatibl
             attachments: branchInput.attachments,
           });
 
-          const raw = yield* callChatCompletions(input, {
-            model: branchInput.modelSelection?.model ?? input.defaultModel,
-            messages: [{ role: "user", content: prompt.prompt }],
-          }, httpClient);
+          const raw = yield* callChatCompletions(
+            input,
+            {
+              model: branchInput.modelSelection?.model ?? input.defaultModel,
+              messages: [{ role: "user", content: prompt.prompt }],
+            },
+            httpClient,
+          );
 
           const decoded = yield* processTextGeneratorResult(
             "generateBranchName",
@@ -346,10 +357,14 @@ export const makeOpenAICompatibleTextGeneration = Effect.fn("makeOpenAICompatibl
             attachments: titleInput.attachments,
           });
 
-          const raw = yield* callChatCompletions(input, {
-            model: titleInput.modelSelection.model ?? input.defaultModel,
-            messages: [{ role: "user", content: prompt.prompt }],
-          }, httpClient);
+          const raw = yield* callChatCompletions(
+            input,
+            {
+              model: titleInput.modelSelection.model ?? input.defaultModel,
+              messages: [{ role: "user", content: prompt.prompt }],
+            },
+            httpClient,
+          );
 
           const decoded = yield* processTextGeneratorResult(
             "generateThreadTitle",

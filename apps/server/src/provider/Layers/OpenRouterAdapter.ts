@@ -75,14 +75,17 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         messages: payload.messages,
         temperature: 0.2,
       });
-      const bodyText = bodyEncoded._tag === "Failure"
-        ? yield* Effect.fail(new ProviderAdapterRequestError({
-            provider: OPENROUTER,
-            method: "chat.completions",
-            detail: "Failed to encode request body.",
-            cause: bodyEncoded.cause,
-          }))
-        : bodyEncoded.value;
+      const bodyText =
+        bodyEncoded._tag === "Failure"
+          ? yield* Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: OPENROUTER,
+                method: "chat.completions",
+                detail: "Failed to encode request body.",
+                cause: bodyEncoded.cause,
+              }),
+            )
+          : bodyEncoded.value;
 
       const request = HttpClientRequest.post(
         `${input.baseUrl.replace(/\/$/, "")}/chat/completions`,

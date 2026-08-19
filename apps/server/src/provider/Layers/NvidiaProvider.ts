@@ -27,10 +27,7 @@ const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Sche
 class NvidiaProbeError extends Error {
   readonly detail: string;
   override readonly cause: unknown;
-  constructor(
-    detail: string,
-    cause: unknown,
-  ) {
+  constructor(detail: string, cause: unknown) {
     super(`NVIDIA probe failed: ${detail}`);
     this.name = "NvidiaProbeError";
     this.detail = detail;
