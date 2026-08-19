@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
-import { TextGenerationError, type ModelSelection } from "@helmcode/contracts";
+import { TextGenerationError } from "@helmcode/contracts";
 import { extractJsonObject } from "@helmcode/shared/schemaJson";
 
 import {
@@ -59,24 +59,17 @@ class OpenAICompatibleTextGenerationOutputError extends Schema.TaggedErrorClass<
 
 const DEFAULT_TEMPERATURE = 0.2;
 
-const chatCompletionsResponseSchema = Schema.Struct({
-  choices: Schema.Array(
-    Schema.Struct({
-      message: Schema.Struct({
-        content: Schema.optionalWith(Schema.String, { default: () => "" }),
-      }),
-    }),
-  ),
-});
-
-const callChatCompletions = (input: {
-  readonly apiKey: string;
-  readonly baseUrl: string;
-  readonly defaultModel: string;
-}, payload: {
-  readonly model: string;
-  readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
-}): Effect.Effect<Record<string, unknown>, OpenAICompatibleTextGenerationRequestError> =>
+const callChatCompletions = (
+  input: {
+    readonly apiKey: string;
+    readonly baseUrl: string;
+    readonly defaultModel: string;
+  },
+  payload: {
+    readonly model: string;
+    readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
+  },
+): Effect.Effect<Record<string, unknown>, OpenAICompatibleTextGenerationRequestError> =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
 
@@ -159,7 +152,10 @@ const decodeChatOutput = Effect.gen(function* <A>(
   operation: string,
   schema: Schema.Schema<A>,
   raw: Record<string, unknown>,
-): Effect.Effect<A, OpenAICompatibleTextGenerationResponseError | OpenAICompatibleTextGenerationOutputError> {
+): Effect.Effect<
+  A,
+  OpenAICompatibleTextGenerationResponseError | OpenAICompatibleTextGenerationOutputError
+> {
   const decoded = yield* Effect.try({
     try: () => Schema.decodeUnknownSync(schema)(raw) as A,
     catch: (value) =>
@@ -236,15 +232,14 @@ export const makeOpenAICompatibleTextGeneration = (input: {
           message: sanitizeCommitSubject((decoded as Record<string, unknown>).message as string),
         };
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            cause instanceof TextGenerationError
-              ? cause
-              : new TextGenerationError({
-                  operation: "generateCommitMessage",
-                  detail: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
+        Effect.mapError((cause) =>
+          cause instanceof TextGenerationError
+            ? cause
+            : new TextGenerationError({
+                operation: "generateCommitMessage",
+                detail: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
         ),
       ),
 
@@ -275,15 +270,14 @@ export const makeOpenAICompatibleTextGeneration = (input: {
           body: extractJsonObject((decoded as Record<string, unknown>).body as string),
         };
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            cause instanceof TextGenerationError
-              ? cause
-              : new TextGenerationError({
-                  operation: "generatePrContent",
-                  detail: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
+        Effect.mapError((cause) =>
+          cause instanceof TextGenerationError
+            ? cause
+            : new TextGenerationError({
+                operation: "generatePrContent",
+                detail: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
         ),
       ),
 
@@ -300,21 +294,24 @@ export const makeOpenAICompatibleTextGeneration = (input: {
           messages: [{ role: "user", content: prompt.prompt }],
         });
 
-        const decoded = yield* processTextGeneratorResult("generateBranchName", prompt.outputSchema, raw);
+        const decoded = yield* processTextGeneratorResult(
+          "generateBranchName",
+          prompt.outputSchema,
+          raw,
+        );
 
         return {
           branch: sanitizeBranchFragment((decoded as Record<string, unknown>).branch as string),
         };
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            cause instanceof TextGenerationError
-              ? cause
-              : new TextGenerationError({
-                  operation: "generateBranchName",
-                  detail: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
+        Effect.mapError((cause) =>
+          cause instanceof TextGenerationError
+            ? cause
+            : new TextGenerationError({
+                operation: "generateBranchName",
+                detail: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
         ),
       ),
 
@@ -329,21 +326,24 @@ export const makeOpenAICompatibleTextGeneration = (input: {
           messages: [{ role: "user", content: prompt.prompt }],
         });
 
-        const decoded = yield* processTextGeneratorResult("generateThreadTitle", prompt.outputSchema, raw);
+        const decoded = yield* processTextGeneratorResult(
+          "generateThreadTitle",
+          prompt.outputSchema,
+          raw,
+        );
 
         return {
           title: sanitizeThreadTitle((decoded as Record<string, unknown>).title as string),
         };
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            cause instanceof TextGenerationError
-              ? cause
-              : new TextGenerationError({
-                  operation: "generateThreadTitle",
-                  detail: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
+        Effect.mapError((cause) =>
+          cause instanceof TextGenerationError
+            ? cause
+            : new TextGenerationError({
+                operation: "generateThreadTitle",
+                detail: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
         ),
       ),
   });

@@ -7,7 +7,6 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import {
   buildServerProvider,
-  nonEmptyTrimmed,
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
@@ -23,7 +22,10 @@ const DEFAULT_OPENROUTER_MODEL_CAPABILITIES: ModelCapabilities = createModelCapa
 });
 
 class OpenRouterProbeError extends Error {
-  constructor(readonly detail: string, readonly cause: unknown) {
+  constructor(
+    readonly detail: string,
+    readonly cause: unknown,
+  ) {
     super(`OpenRouter probe failed: ${detail}`);
     this.name = "OpenRouterProbeError";
   }
@@ -50,7 +52,12 @@ function formatOpenRouterProbeError(input: {
   const detail = normalizeOpenRouterErrorMessage(input.cause);
   const lower = detail?.toLowerCase() ?? "";
 
-  if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("forbidden")) {
+  if (
+    lower.includes("401") ||
+    lower.includes("403") ||
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden")
+  ) {
     return {
       installed: true,
       message: "OpenRouter rejected authentication. Check the API key in settings.",
@@ -78,9 +85,7 @@ function formatOpenRouterProbeError(input: {
   };
 }
 
-function flattenOpenRouterModels(
-  responseData: unknown,
-): readonly ServerProviderModel[] {
+function flattenOpenRouterModels(responseData: unknown): readonly ServerProviderModel[] {
   const data = (responseData as Record<string, unknown>)?.data;
   const list = Array.isArray(data) ? data : [];
 
@@ -88,9 +93,7 @@ function flattenOpenRouterModels(
     const rawId = (model as Record<string, unknown>)?.id;
     const rawName = (model as Record<string, unknown>)?.name;
     const id = typeof rawId === "string" ? rawId.trim() : "";
-    const name = typeof rawName === "string" && rawName.trim().length > 0
-      ? rawName.trim()
-      : id;
+    const name = typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : id;
     const slashIndex = id.indexOf("/");
     const subProvider = slashIndex >= 0 ? id.slice(0, slashIndex).trim() : undefined;
     return {
@@ -146,12 +149,16 @@ export const makePendingOpenRouterProvider = (input: {
     });
   });
 
-export const checkOpenRouterProviderStatus = (input: {
-  readonly enabled: boolean;
-  readonly apiKey: string;
-  readonly baseUrl: string;
-  readonly customModels: readonly string[];
-}, cwd: string, httpClient: HttpClient.HttpClient): Effect.Effect<ServerProviderDraft> =>
+export const checkOpenRouterProviderStatus = (
+  input: {
+    readonly enabled: boolean;
+    readonly apiKey: string;
+    readonly baseUrl: string;
+    readonly customModels: readonly string[];
+  },
+  cwd: string,
+  httpClient: HttpClient.HttpClient,
+): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const customModels = input.customModels;
@@ -197,9 +204,7 @@ export const checkOpenRouterProviderStatus = (input: {
     }
 
     const probe = Effect.gen(function* () {
-      const request = HttpClientRequest.post(
-        `${input.baseUrl.replace(/\/$/, "")}/models`,
-      ).pipe(
+      const request = HttpClientRequest.post(`${input.baseUrl.replace(/\/$/, "")}/models`).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
         HttpClientRequest.setHeader("Content-Type", "application/json"),
       );
@@ -252,9 +257,10 @@ export const checkOpenRouterProviderStatus = (input: {
           status: models.length > 0 ? "authenticated" : "unknown",
           type: "openrouter",
         },
-        message: models.length > 0
-          ? `${models.length} model${models.length === 1 ? "" : "s"} available through OpenRouter.`
-          : "Connected to OpenRouter, but no models were returned.",
+        message:
+          models.length > 0
+            ? `${models.length} model${models.length === 1 ? "" : "s"} available through OpenRouter.`
+            : "Connected to OpenRouter, but no models were returned.",
       },
     });
   });

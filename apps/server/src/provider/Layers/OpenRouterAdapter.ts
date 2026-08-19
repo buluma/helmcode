@@ -1,11 +1,14 @@
 import type { OpenRouterAdapterShape } from "../Services/OpenRouterAdapter.ts";
-import type { ProviderThreadSnapshot, ProviderThreadTurnSnapshot } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderThreadSnapshot,
+  ProviderThreadTurnSnapshot,
+} from "../Services/ProviderAdapter.ts";
 import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientRequest, HttpClientError } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
@@ -16,7 +19,11 @@ import {
   ThreadId,
   TurnId,
 } from "@helmcode/contracts";
-import { ProviderAdapterRequestError, ProviderAdapterSessionNotFoundError, ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterRequestError,
+  ProviderAdapterSessionNotFoundError,
+  ProviderAdapterValidationError,
+} from "../Errors.ts";
 
 const OPENROUTER = ProviderDriverKind.make("openrouter");
 
@@ -65,7 +72,9 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         temperature: 0.2,
       });
 
-      const request = HttpClientRequest.post(`${input.baseUrl.replace(/\/$/, "")}/chat/completions`).pipe(
+      const request = HttpClientRequest.post(
+        `${input.baseUrl.replace(/\/$/, "")}/chat/completions`,
+      ).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
         HttpClientRequest.setHeader("Content-Type", "application/json"),
         HttpClientRequest.bodyText(bodyText),
@@ -129,7 +138,9 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       });
 
       const choices = (parsed.choices as Array<Record<string, unknown>> | undefined) ?? [];
-      const content = (choices[0]?.message as Record<string, unknown> | undefined)?.content as string | undefined;
+      const content = (choices[0]?.message as Record<string, unknown> | undefined)?.content as
+        | string
+        | undefined;
       if (!content || content.trim().length === 0) {
         return yield* Effect.fail(
           new ProviderAdapterRequestError({
@@ -232,7 +243,12 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
           turnId,
           createdAt: yield* nowIso,
           type: "item.completed",
-          payload: { itemType: "assistant_message", status: "completed", title: "Assistant message", detail: fullText },
+          payload: {
+            itemType: "assistant_message",
+            status: "completed",
+            title: "Assistant message",
+            detail: fullText,
+          },
         });
 
         yield* publish({
@@ -246,9 +262,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         });
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.ignoreCause(
-            Effect.logError("OpenRouter adapter turn failed", { cause }),
-          ),
+          Effect.ignoreCause(Effect.logError("OpenRouter adapter turn failed", { cause })),
         ),
       );
 
@@ -257,12 +271,19 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       return { threadId: turnInput.threadId, turnId };
     });
 
-  const interruptTurn: OpenRouterAdapterShape["interruptTurn"] = (_threadId: ThreadId, _turnId?: TurnId) =>
+  const interruptTurn: OpenRouterAdapterShape["interruptTurn"] = (
+    _threadId: ThreadId,
+    _turnId?: TurnId,
+  ) =>
     Effect.sync(() => {
       sessions.delete(_threadId);
     });
 
-  const respondToRequest: OpenRouterAdapterShape["respondToRequest"] = (_threadId: ThreadId, _requestId: string, _decision: string) =>
+  const respondToRequest: OpenRouterAdapterShape["respondToRequest"] = (
+    _threadId: ThreadId,
+    _requestId: string,
+    _decision: string,
+  ) =>
     Effect.fail(
       new ProviderAdapterValidationError({
         provider: OPENROUTER,
@@ -271,7 +292,11 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       }),
     );
 
-  const respondToUserInput: OpenRouterAdapterShape["respondToUserInput"] = (_threadId: ThreadId, _requestId: string, _answers: unknown) =>
+  const respondToUserInput: OpenRouterAdapterShape["respondToUserInput"] = (
+    _threadId: ThreadId,
+    _requestId: string,
+    _answers: unknown,
+  ) =>
     Effect.fail(
       new ProviderAdapterValidationError({
         provider: OPENROUTER,
@@ -338,7 +363,10 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       return { threadId, turns } as ProviderThreadSnapshot;
     });
 
-  const rollbackThread: OpenRouterAdapterShape["rollbackThread"] = (threadId: ThreadId, numTurns: number) =>
+  const rollbackThread: OpenRouterAdapterShape["rollbackThread"] = (
+    threadId: ThreadId,
+    numTurns: number,
+  ) =>
     Effect.gen(function* () {
       const session = sessions.get(threadId);
       if (!session) {

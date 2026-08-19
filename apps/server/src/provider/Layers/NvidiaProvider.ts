@@ -7,7 +7,6 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import {
   buildServerProvider,
-  nonEmptyTrimmed,
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
@@ -23,7 +22,10 @@ const DEFAULT_NVIDIA_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
 });
 
 class NvidiaProbeError extends Error {
-  constructor(readonly detail: string, readonly cause: unknown) {
+  constructor(
+    readonly detail: string,
+    readonly cause: unknown,
+  ) {
     super(`NVIDIA probe failed: ${detail}`);
     this.name = "NvidiaProbeError";
   }
@@ -50,7 +52,12 @@ function formatNvidiaProbeError(input: {
   const detail = normalizeNvidiaErrorMessage(input.cause);
   const lower = detail?.toLowerCase() ?? "";
 
-  if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("forbidden")) {
+  if (
+    lower.includes("401") ||
+    lower.includes("403") ||
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden")
+  ) {
     return {
       installed: true,
       message: "NVIDIA rejected authentication. Check the API key in settings.",
@@ -78,9 +85,7 @@ function formatNvidiaProbeError(input: {
   };
 }
 
-function flattenNvidiaModels(
-  responseData: unknown,
-): readonly ServerProviderModel[] {
+function flattenNvidiaModels(responseData: unknown): readonly ServerProviderModel[] {
   const data = (responseData as Record<string, unknown>)?.data;
   const list = Array.isArray(data) ? data : [];
 
@@ -88,9 +93,7 @@ function flattenNvidiaModels(
     const rawId = (model as Record<string, unknown>)?.id;
     const rawName = (model as Record<string, unknown>)?.name;
     const id = typeof rawId === "string" ? rawId.trim() : "";
-    const name = typeof rawName === "string" && rawName.trim().length > 0
-      ? rawName.trim()
-      : id;
+    const name = typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : id;
     const slashIndex = id.indexOf("/");
     const subProvider = slashIndex >= 0 ? id.slice(0, slashIndex).trim() : undefined;
     return {
@@ -146,12 +149,16 @@ export const makePendingNvidiaProvider = (input: {
     });
   });
 
-export const checkNvidiaProviderStatus = (input: {
-  readonly enabled: boolean;
-  readonly apiKey: string;
-  readonly baseUrl: string;
-  readonly customModels: readonly string[];
-}, cwd: string, httpClient: HttpClient.HttpClient): Effect.Effect<ServerProviderDraft> =>
+export const checkNvidiaProviderStatus = (
+  input: {
+    readonly enabled: boolean;
+    readonly apiKey: string;
+    readonly baseUrl: string;
+    readonly customModels: readonly string[];
+  },
+  cwd: string,
+  httpClient: HttpClient.HttpClient,
+): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const customModels = input.customModels;
@@ -197,9 +204,7 @@ export const checkNvidiaProviderStatus = (input: {
     }
 
     const probe = Effect.gen(function* () {
-      const request = HttpClientRequest.post(
-        `${input.baseUrl.replace(/\/$/, "")}/models`,
-      ).pipe(
+      const request = HttpClientRequest.post(`${input.baseUrl.replace(/\/$/, "")}/models`).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
         HttpClientRequest.setHeader("Content-Type", "application/json"),
       );
@@ -220,10 +225,7 @@ export const checkNvidiaProviderStatus = (input: {
     }).pipe(
       Effect.mapError((cause) => {
         if (cause instanceof NvidiaProbeError) return cause;
-        return new NvidiaProbeError(
-          cause instanceof Error ? cause.message : String(cause),
-          cause,
-        );
+        return new NvidiaProbeError(cause instanceof Error ? cause.message : String(cause), cause);
       }),
     );
 
@@ -252,9 +254,10 @@ export const checkNvidiaProviderStatus = (input: {
           status: models.length > 0 ? "authenticated" : "unknown",
           type: "nvidia",
         },
-        message: models.length > 0
-          ? `${models.length} model${models.length === 1 ? "" : "s"} available through NVIDIA NIM.`
-          : "Connected to NVIDIA NIM, but no models were returned.",
+        message:
+          models.length > 0
+            ? `${models.length} model${models.length === 1 ? "" : "s"} available through NVIDIA NIM.`
+            : "Connected to NVIDIA NIM, but no models were returned.",
       },
     });
   });

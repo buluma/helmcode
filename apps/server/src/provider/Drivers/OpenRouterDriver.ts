@@ -17,7 +17,6 @@ import { makeOpenAICompatibleTextGeneration } from "../../textGeneration/OpenAIC
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import type { OpenRouterAdapterShape } from "../Services/OpenRouterAdapter.ts";
 import { makeOpenRouterAdapter } from "../Layers/OpenRouterAdapter.ts";
 import {
   checkOpenRouterProviderStatus,
@@ -74,12 +73,12 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
   },
   configSchema: OpenRouterSettings,
   defaultConfig: (): OpenRouterSettings => decodeOpenRouterSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, _environment, enabled, config }) =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
+      const _crypto = yield* Crypto.Crypto;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
-      const eventLoggers = yield* ProviderEventLoggers;
+      const _eventLoggers = yield* ProviderEventLoggers;
       const httpClient = yield* HttpClient.HttpClient;
       const effectiveConfig = { ...config, enabled } satisfies OpenRouterSettings;
 
@@ -107,7 +106,9 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
       });
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenRouterSettings>>({
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<OpenRouterSettings>
+      >({
         maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
           provider: DRIVER_KIND,
           packageName: null,
@@ -118,10 +119,10 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
         initialSnapshot: (settings) =>
           makePendingOpenRouterProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider: checkOpenRouterProviderStatus(
-            effectiveConfig,
-            serverConfig.cwd,
-            httpClient,
-          ).pipe(Effect.map(stampIdentity)),
+          effectiveConfig,
+          serverConfig.cwd,
+          httpClient,
+        ).pipe(Effect.map(stampIdentity)),
       }).pipe(
         Effect.mapError(
           (cause) =>

@@ -17,12 +17,8 @@ import { makeOpenAICompatibleTextGeneration } from "../../textGeneration/OpenAIC
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import type { NvidiaAdapterShape } from "../Services/NvidiaAdapter.ts";
 import { makeNvidiaAdapter } from "../Layers/NvidiaAdapter.ts";
-import {
-  checkNvidiaProviderStatus,
-  makePendingNvidiaProvider,
-} from "../Layers/NvidiaProvider.ts";
+import { checkNvidiaProviderStatus, makePendingNvidiaProvider } from "../Layers/NvidiaProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -74,12 +70,12 @@ export const NvidiaDriver: ProviderDriver<NvidiaSettings, NvidiaDriverEnv> = {
   },
   configSchema: NvidiaSettings,
   defaultConfig: (): NvidiaSettings => decodeNvidiaSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, _environment, enabled, config }) =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
+      const _crypto = yield* Crypto.Crypto;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
-      const eventLoggers = yield* ProviderEventLoggers;
+      const _eventLoggers = yield* ProviderEventLoggers;
       const effectiveConfig = { ...config, enabled } satisfies NvidiaSettings;
 
       const httpClient = yield* HttpClient.HttpClient;
@@ -119,10 +115,10 @@ export const NvidiaDriver: ProviderDriver<NvidiaSettings, NvidiaDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingNvidiaProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider: checkNvidiaProviderStatus(
-            effectiveConfig,
-            serverConfig.cwd,
-            httpClient,
-          ).pipe(Effect.map(stampIdentity)),
+          effectiveConfig,
+          serverConfig.cwd,
+          httpClient,
+        ).pipe(Effect.map(stampIdentity)),
       }).pipe(
         Effect.mapError(
           (cause) =>
