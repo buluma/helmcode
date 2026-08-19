@@ -73,7 +73,7 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
   },
   configSchema: OpenRouterSettings,
   defaultConfig: (): OpenRouterSettings => decodeOpenRouterSettings({}),
-  create: ({ instanceId, displayName, accentColor, _environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, enabled, config }) =>
     Effect.gen(function* () {
       const _crypto = yield* Crypto.Crypto;
       const serverConfig = yield* ServerConfig;
@@ -88,7 +88,7 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
         defaultModel: "openai/gpt-4o-mini",
       });
 
-      const textGeneration = makeOpenAICompatibleTextGeneration({
+      const textGeneration = yield* makeOpenAICompatibleTextGeneration({
         apiKey: effectiveConfig.apiKey,
         baseUrl: effectiveConfig.baseUrl,
         defaultModel: "openai/gpt-4o-mini",

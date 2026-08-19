@@ -70,7 +70,7 @@ export const NvidiaDriver: ProviderDriver<NvidiaSettings, NvidiaDriverEnv> = {
   },
   configSchema: NvidiaSettings,
   defaultConfig: (): NvidiaSettings => decodeNvidiaSettings({}),
-  create: ({ instanceId, displayName, accentColor, _environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, enabled, config }) =>
     Effect.gen(function* () {
       const _crypto = yield* Crypto.Crypto;
       const serverConfig = yield* ServerConfig;
@@ -86,7 +86,7 @@ export const NvidiaDriver: ProviderDriver<NvidiaSettings, NvidiaDriverEnv> = {
         defaultModel: "meta/llama-3.1-70b-instruct",
       });
 
-      const textGeneration = makeOpenAICompatibleTextGeneration({
+      const textGeneration = yield* makeOpenAICompatibleTextGeneration({
         apiKey: effectiveConfig.apiKey,
         baseUrl: effectiveConfig.baseUrl,
         defaultModel: "meta/llama-3.1-70b-instruct",

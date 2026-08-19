@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
@@ -26,6 +27,9 @@ import {
 } from "../Errors.ts";
 
 const NVIDIA = ProviderDriverKind.make("nvidia");
+
+const encodeJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 interface Session {
   readonly messages: Array<{ readonly role: "user" | "assistant"; readonly content: string }>;
@@ -66,11 +70,19 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
     readonly model: string;
   }): Effect.Effect<string, ProviderAdapterRequestError> =>
     Effect.gen(function* () {
-      const bodyText = JSON.stringify({
+      const bodyEncoded = encodeJsonStringExit({
         model: payload.model,
         messages: payload.messages,
         temperature: 0.2,
       });
+      const bodyText = bodyEncoded._tag === "Failure"
+        ? yield* Effect.fail(new ProviderAdapterRequestError({
+            provider: NVIDIA,
+            method: "chat.completions",
+            detail: "Failed to encode request body.",
+            cause: bodyEncoded.cause,
+          }))
+        : bodyEncoded.value;
 
       const request = HttpClientRequest.post(
         `${input.baseUrl.replace(/\/$/, "")}/chat/completions`,
@@ -127,7 +139,11 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
       );
 
       const parsed = yield* Effect.try({
-        try: () => JSON.parse(responseText) as Record<string, unknown>,
+        try: () => {
+          const result = decodeJsonStringExit(responseText);
+          if (result._tag === "Failure") throw result.cause;
+          return result.value as Record<string, unknown>;
+        },
         catch: (error) =>
           new ProviderAdapterRequestError({
             provider: NVIDIA,

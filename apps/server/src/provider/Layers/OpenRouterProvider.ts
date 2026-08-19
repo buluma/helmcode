@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import * as Schema from "effect/Schema";
 
 import {
   buildServerProvider,
@@ -21,13 +22,19 @@ const DEFAULT_OPENROUTER_MODEL_CAPABILITIES: ModelCapabilities = createModelCapa
   optionDescriptors: [],
 });
 
+const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+
 class OpenRouterProbeError extends Error {
+  readonly detail: string;
+  override readonly cause: unknown;
   constructor(
-    readonly detail: string,
-    readonly cause: unknown,
+    detail: string,
+    cause: unknown,
   ) {
     super(`OpenRouter probe failed: ${detail}`);
     this.name = "OpenRouterProbeError";
+    this.detail = detail;
+    this.cause = cause;
   }
 }
 
@@ -220,7 +227,11 @@ export const checkOpenRouterProviderStatus = (
       }
 
       const responseText = yield* response.text;
-      const parsed = JSON.parse(responseText) as Record<string, unknown>;
+      const parsedResult = decodeJsonStringExit(responseText);
+      if (parsedResult._tag === "Failure") {
+        throw new OpenRouterProbeError("Response body was not valid JSON.", parsedResult.cause);
+      }
+      const parsed = parsedResult.value as Record<string, unknown>;
       return parsed;
     }).pipe(
       Effect.mapError((cause) => {

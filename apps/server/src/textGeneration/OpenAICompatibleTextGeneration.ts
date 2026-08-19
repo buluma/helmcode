@@ -3,6 +3,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
 import { TextGenerationError } from "@helmcode/contracts";
+import { sanitizeBranchFragment } from "@helmcode/shared/git";
 import { extractJsonObject } from "@helmcode/shared/schemaJson";
 
 import {
@@ -12,7 +13,6 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
-  sanitizeBranchFragment,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -59,6 +59,9 @@ class OpenAICompatibleTextGenerationOutputError extends Schema.TaggedErrorClass<
 
 const DEFAULT_TEMPERATURE = 0.2;
 
+const encodeJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+
 const callChatCompletions = (
   input: {
     readonly apiKey: string;
@@ -69,18 +72,21 @@ const callChatCompletions = (
     readonly model: string;
     readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
   },
+  httpClient: HttpClient.HttpClient,
 ): Effect.Effect<Record<string, unknown>, OpenAICompatibleTextGenerationRequestError> =>
   Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
 
+    const bodyEncoded = encodeJsonStringExit({
+      model: payload.model,
+      messages: payload.messages,
+      temperature: DEFAULT_TEMPERATURE,
+      response_format: { type: "json_object" },
+    });
     const bodyText = yield* Effect.try({
-      try: () =>
-        JSON.stringify({
-          model: payload.model,
-          messages: payload.messages,
-          temperature: DEFAULT_TEMPERATURE,
-          response_format: { type: "json_object" },
-        }),
+      try: () => {
+        if (bodyEncoded._tag === "Failure") throw bodyEncoded.cause;
+        return bodyEncoded.value;
+      },
       catch: (error) =>
         new OpenAICompatibleTextGenerationRequestError({
           operation: payload.model,
@@ -109,34 +115,42 @@ const callChatCompletions = (
     );
 
     if (response.status !== 200) {
-      const text = yield* Effect.tryPromise({
-        try: () => response.text,
-        catch: (cause) =>
-          new OpenAICompatibleTextGenerationRequestError({
-            operation: payload.model,
-            detail: `HTTP ${response.status}`,
-            cause,
-          }),
-      });
-      throw new OpenAICompatibleTextGenerationRequestError({
-        operation: payload.model,
-        detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
-        cause: new Error(`HTTP ${response.status}`),
-      });
-    }
-
-    const responseText = yield* Effect.tryPromise({
-      try: () => response.text,
-      catch: (cause) =>
+      const text = yield* response.text.pipe(
+        Effect.mapError(
+          (cause) =>
+            new OpenAICompatibleTextGenerationRequestError({
+              operation: payload.model,
+              detail: `HTTP ${response.status}`,
+              cause,
+            }),
+        ),
+      );
+      return yield* Effect.fail(
         new OpenAICompatibleTextGenerationRequestError({
           operation: payload.model,
-          detail: "OpenAI-compatible response body was not valid JSON.",
-          cause,
+          detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
+          cause: new Error(`HTTP ${response.status}`),
         }),
-    });
+      );
+    }
+
+    const responseText = yield* response.text.pipe(
+      Effect.mapError(
+        (cause) =>
+          new OpenAICompatibleTextGenerationRequestError({
+            operation: payload.model,
+            detail: "OpenAI-compatible response body was not valid JSON.",
+            cause,
+          }),
+      ),
+    );
 
     const parsed = yield* Effect.try({
-      try: () => JSON.parse(responseText) as Record<string, unknown>,
+      try: () => {
+        const result = decodeJsonStringExit(responseText);
+        if (result._tag === "Failure") throw result.cause;
+        return result.value as Record<string, unknown>;
+      },
       catch: (error) =>
         new OpenAICompatibleTextGenerationRequestError({
           operation: payload.model,
@@ -148,33 +162,38 @@ const callChatCompletions = (
     return parsed;
   });
 
-const decodeChatOutput = Effect.gen(function* <A>(
+const isTextGenerationError = Schema.is(TextGenerationError);
+
+const decodeChatOutput = <A>(
   operation: string,
   schema: Schema.Schema<A>,
   raw: Record<string, unknown>,
 ): Effect.Effect<
   A,
   OpenAICompatibleTextGenerationResponseError | OpenAICompatibleTextGenerationOutputError
-> {
-  const decoded = yield* Effect.try({
-    try: () => Schema.decodeUnknownSync(schema)(raw) as A,
-    catch: (value) =>
+> => {
+  const decoder = Schema.decodeUnknownExit(
+    schema as unknown as Schema.ConstraintDecoder<unknown, never>,
+  );
+  const exit = decoder(raw);
+  if (exit._tag === "Failure") {
+    return Effect.fail(
       new OpenAICompatibleTextGenerationOutputError({
         operation,
         detail: `Decoded value does not match the requested schema.`,
-        cause: value instanceof Error ? value : undefined,
+        cause: exit.cause instanceof Error ? exit.cause : undefined,
       }),
-  });
+    );
+  }
+  return Effect.succeed(exit.value as A);
+};
 
-  return decoded;
-});
-
-const processTextGeneratorResult = Effect.gen(function* <A>(
+const processTextGeneratorResult = <A>(
   operation: string,
   schema: Schema.Schema<A>,
   raw: Record<string, unknown>,
-): Effect.Effect<A, TextGenerationError> {
-  const decoded = yield* decodeChatOutput(operation, schema, raw).pipe(
+): Effect.Effect<A, TextGenerationError> =>
+  decodeChatOutput(operation, schema, raw).pipe(
     Effect.catchTags({
       OpenAICompatibleTextGenerationResponseError: (error) =>
         Effect.fail(
@@ -195,155 +214,163 @@ const processTextGeneratorResult = Effect.gen(function* <A>(
     }),
   );
 
-  return decoded as A;
-});
+export const makeOpenAICompatibleTextGeneration = Effect.fn("makeOpenAICompatibleTextGeneration")(
+  function* (input: {
+    readonly apiKey: string;
+    readonly baseUrl: string;
+    readonly defaultModel: string;
+  }) {
+    const httpClient = yield* HttpClient.HttpClient;
 
-export const makeOpenAICompatibleTextGeneration = (input: {
-  readonly apiKey: string;
-  readonly baseUrl: string;
-  readonly defaultModel: string;
-}): TextGeneration.TextGeneration["Service"] =>
-  TextGeneration.TextGeneration.of({
-    generateCommitMessage: (commitInput) =>
-      Effect.gen(function* () {
-        const prompt = buildCommitMessagePrompt({
-          repositoryName: commitInput.repositoryName,
-          diffs: commitInput.diffs,
-          branch: commitInput.branch,
-        });
+    return TextGeneration.TextGeneration.of({
+      generateCommitMessage: (commitInput) =>
+        Effect.gen(function* () {
+          const prompt = buildCommitMessagePrompt({
+            branch: commitInput.branch,
+            stagedSummary: commitInput.stagedSummary,
+            stagedPatch: commitInput.stagedPatch,
+            includeBranch: commitInput.includeBranch ?? false,
+            policy: commitInput.policy,
+          });
 
-        const raw = yield* callChatCompletions(input, {
-          model: commitInput.modelSelection?.model ?? input.defaultModel,
-          messages: [
-            {
-              role: "user",
-              content: prompt.prompt,
-            },
-          ],
-        });
+          const raw = yield* callChatCompletions(input, {
+            model: commitInput.modelSelection?.model ?? input.defaultModel,
+            messages: [
+              {
+                role: "user",
+                content: prompt.prompt,
+              },
+            ],
+          }, httpClient);
 
-        const decoded = yield* processTextGeneratorResult(
-          "generateCommitMessage",
-          prompt.outputSchema,
-          raw,
-        );
+          const decoded = yield* processTextGeneratorResult(
+            "generateCommitMessage",
+            prompt.outputSchema,
+            raw,
+          );
 
-        return {
-          message: sanitizeCommitSubject((decoded as Record<string, unknown>).message as string),
-        };
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof TextGenerationError
-            ? cause
-            : new TextGenerationError({
-                operation: "generateCommitMessage",
-                detail: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
+          const record = decoded as Record<string, unknown>;
+          return {
+            subject: sanitizeCommitSubject(record.subject as string),
+            body: (record.body as string) ?? "",
+          };
+        }).pipe(
+          Effect.mapError((cause) =>
+            isTextGenerationError(cause)
+              ? cause
+              : new TextGenerationError({
+                  operation: "generateCommitMessage",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+          ),
         ),
-      ),
 
-    generatePrContent: (prInput) =>
-      Effect.gen(function* () {
-        const prompt = buildPrContentPrompt({
-          title: prInput.baseTitle,
-          branch: prInput.branch,
-          diff: prInput.diff,
-          repositoryName: prInput.repositoryName,
-          isFirstCommit: prInput.isFirstCommit,
-          description: prInput.description,
-        });
+      generatePrContent: (prInput) =>
+        Effect.gen(function* () {
+          const prompt = buildPrContentPrompt({
+            baseBranch: prInput.baseBranch,
+            headBranch: prInput.headBranch,
+            commitSummary: prInput.commitSummary,
+            diffSummary: prInput.diffSummary,
+            diffPatch: prInput.diffPatch,
+            changeRequestTemplate: prInput.changeRequestTemplate,
+            policy: prInput.policy,
+          });
 
-        const raw = yield* callChatCompletions(input, {
-          model: prInput.modelSelection?.model ?? input.defaultModel,
-          messages: [{ role: "user", content: prompt.prompt }],
-        });
+          const raw = yield* callChatCompletions(input, {
+            model: prInput.modelSelection?.model ?? input.defaultModel,
+            messages: [{ role: "user", content: prompt.prompt }],
+          }, httpClient);
 
-        const decoded = yield* processTextGeneratorResult(
-          "generatePrContent",
-          prompt.outputSchema,
-          raw,
-        );
+          const decoded = yield* processTextGeneratorResult(
+            "generatePrContent",
+            prompt.outputSchema,
+            raw,
+          );
 
-        return {
-          title: sanitizePrTitle((decoded as Record<string, unknown>).title as string),
-          body: extractJsonObject((decoded as Record<string, unknown>).body as string),
-        };
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof TextGenerationError
-            ? cause
-            : new TextGenerationError({
-                operation: "generatePrContent",
-                detail: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
+          return {
+            title: sanitizePrTitle((decoded as Record<string, unknown>).title as string),
+            body: extractJsonObject((decoded as Record<string, unknown>).body as string),
+          };
+        }).pipe(
+          Effect.mapError((cause) =>
+            isTextGenerationError(cause)
+              ? cause
+              : new TextGenerationError({
+                  operation: "generatePrContent",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+          ),
         ),
-      ),
 
-    generateBranchName: (branchInput) =>
-      Effect.gen(function* () {
-        const prompt = buildBranchNamePrompt({
-          repositoryName: branchInput.repositoryName,
-          diffs: branchInput.diffs,
-          branch: branchInput.branch,
-        });
+      generateBranchName: (branchInput) =>
+        Effect.gen(function* () {
+          const prompt = buildBranchNamePrompt({
+            message: branchInput.message,
+            attachments: branchInput.attachments,
+          });
 
-        const raw = yield* callChatCompletions(input, {
-          model: branchInput.modelSelection?.model ?? input.defaultModel,
-          messages: [{ role: "user", content: prompt.prompt }],
-        });
+          const raw = yield* callChatCompletions(input, {
+            model: branchInput.modelSelection?.model ?? input.defaultModel,
+            messages: [{ role: "user", content: prompt.prompt }],
+          }, httpClient);
 
-        const decoded = yield* processTextGeneratorResult(
-          "generateBranchName",
-          prompt.outputSchema,
-          raw,
-        );
+          const decoded = yield* processTextGeneratorResult(
+            "generateBranchName",
+            prompt.outputSchema,
+            raw,
+          );
 
-        return {
-          branch: sanitizeBranchFragment((decoded as Record<string, unknown>).branch as string),
-        };
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof TextGenerationError
-            ? cause
-            : new TextGenerationError({
-                operation: "generateBranchName",
-                detail: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
+          return {
+            branch: sanitizeBranchFragment((decoded as Record<string, unknown>).branch as string),
+          };
+        }).pipe(
+          Effect.mapError((cause) =>
+            isTextGenerationError(cause)
+              ? cause
+              : new TextGenerationError({
+                  operation: "generateBranchName",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+          ),
         ),
-      ),
 
-    generateThreadTitle: (titleInput) =>
-      Effect.gen(function* () {
-        const prompt = buildThreadTitlePrompt({
-          attachments: titleInput.attachments,
-        });
+      generateThreadTitle: (titleInput) =>
+        Effect.gen(function* () {
+          const prompt = buildThreadTitlePrompt({
+            message: titleInput.message,
+            previousTitle: titleInput.previousTitle,
+            attachments: titleInput.attachments,
+          });
 
-        const raw = yield* callChatCompletions(input, {
-          model: titleInput.modelSelection.model ?? input.defaultModel,
-          messages: [{ role: "user", content: prompt.prompt }],
-        });
+          const raw = yield* callChatCompletions(input, {
+            model: titleInput.modelSelection.model ?? input.defaultModel,
+            messages: [{ role: "user", content: prompt.prompt }],
+          }, httpClient);
 
-        const decoded = yield* processTextGeneratorResult(
-          "generateThreadTitle",
-          prompt.outputSchema,
-          raw,
-        );
+          const decoded = yield* processTextGeneratorResult(
+            "generateThreadTitle",
+            prompt.outputSchema,
+            raw,
+          );
 
-        return {
-          title: sanitizeThreadTitle((decoded as Record<string, unknown>).title as string),
-        };
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof TextGenerationError
-            ? cause
-            : new TextGenerationError({
-                operation: "generateThreadTitle",
-                detail: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
+          return {
+            title: sanitizeThreadTitle((decoded as Record<string, unknown>).title as string),
+          };
+        }).pipe(
+          Effect.mapError((cause) =>
+            isTextGenerationError(cause)
+              ? cause
+              : new TextGenerationError({
+                  operation: "generateThreadTitle",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+          ),
         ),
-      ),
-  });
+    });
+  },
+);
