@@ -52,6 +52,18 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  {
+    value: ProviderDriverKind.make("nvidia"),
+    label: "NVIDIA",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
+  {
+    value: ProviderDriverKind.make("openrouter"),
+    label: "OpenRouter",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =

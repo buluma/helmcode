@@ -471,6 +471,86 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const OpenRouterSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description: "Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "sk-or-…",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    baseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("https://openrouter.ai/api/v1")),
+      Schema.annotateKey({
+        title: "Base URL",
+        description: "Chat completions base URL for this OpenRouter instance.",
+        providerSettingsForm: {
+          placeholder: "https://openrouter.ai/api/v1",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiKey", "baseUrl"],
+  },
+);
+export type OpenRouterSettings = typeof OpenRouterSettings.Type;
+
+export const NvidiaSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description: "Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "nvapi-…",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    baseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("https://integrate.api.nvidia.com/v1")),
+      Schema.annotateKey({
+        title: "Base URL",
+        description: "NVIDIA NIM / build base URL for this instance.",
+        providerSettingsForm: {
+          placeholder: "https://integrate.api.nvidia.com/v1",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiKey", "baseUrl"],
+  },
+);
+export type NvidiaSettings = typeof NvidiaSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -601,6 +681,8 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    nvidia: NvidiaSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -704,6 +786,20 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const OpenRouterSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const NvidiaSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -744,6 +840,8 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
+      nvidia: Schema.optionalKey(NvidiaSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
