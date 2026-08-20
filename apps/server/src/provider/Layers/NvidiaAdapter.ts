@@ -281,7 +281,22 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         });
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.ignoreCause(Effect.logError("NVIDIA adapter turn failed", { cause })),
+          Effect.gen(function* () {
+            yield* Effect.logError("NVIDIA adapter turn failed", { cause });
+            yield* publish({
+              eventId: yield* nextEventId,
+              provider: NVIDIA,
+              threadId: turnInput.threadId,
+              turnId,
+              createdAt: yield* nowIso,
+              type: "session.exited",
+              payload: {
+                reason: cause instanceof Error ? cause.message : "NVIDIA adapter turn failed.",
+                recoverable: false,
+                exitKind: "error",
+              },
+            });
+          }),
         ),
       );
 
