@@ -208,9 +208,8 @@ export const checkNvidiaProviderStatus = (
     }
 
     const probe = Effect.gen(function* () {
-      const request = HttpClientRequest.post(`${input.baseUrl.replace(/\/$/, "")}/models`).pipe(
+      const request = HttpClientRequest.get(`${input.baseUrl.replace(/\/$/, "")}/models`).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
-        HttpClientRequest.setHeader("Content-Type", "application/json"),
       );
 
       const response = yield* httpClient.execute(request);
