@@ -34,11 +34,6 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
       - name: Ensure Electron runtime is installed
         run: vp run --filter @helmcode/desktop ensure:electron
 
@@ -47,9 +42,6 @@ jobs:
 
       - name: Typecheck
         run: vpr typecheck
-
-      - name: Check resource monitor formatting
-        run: cargo fmt --manifest-path native/resource-monitor/Cargo.toml -- --check
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -60,6 +52,11 @@ jobs:
           grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
           grep -n "__clerk_internal_electron_passkeys" apps/desktop/dist-electron/preload.cjs
 
+  # Everything except `helmcode` (apps/server). `--parallel` drops the package
+  # dependency ordering that `vp run` applies by default: these `test` tasks
+  # declare no `dependsOn` and resolve workspace deps from source, so ordering
+  # only bought us idle runners between dependency layers. The concurrency
+  # limit stays at the default 4 so peak load per runner is unchanged.
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -80,14 +77,68 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Ensure Electron runtime is installed
         run: vp run --filter @helmcode/desktop ensure:electron
 
       - name: Test
-        run: vp run test
+        run: vp run --parallel --concurrency-limit 4 --filter '!helmcode' --filter '!@helmcode/monorepo' test
+
+  # apps/server sets `fileParallelism: false`, so its test files run strictly
+  # one at a time. Sharding spreads them over separate runners instead of
+  # separate workers, so no two server test files ever share a machine and the
+  # isolation that flag buys is preserved exactly.
+  test_server:
+    name: Test Server ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # No Electron setup here: `helmcode` (apps/server) has no Electron
+      # dependency and none of its tests touch the runtime. Only the
+      # non-server `test` job, which covers @helmcode/desktop, needs it.
+      - name: Test
+        run: vp run --filter helmcode test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+
+  # Split out of Check and Test: both paid a Rust toolchain install for checks
+  # that take a couple seconds, on the critical path of every PR.
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check resource monitor formatting
+        run: cargo fmt --manifest-path native/resource-monitor/Cargo.toml -- --check
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
