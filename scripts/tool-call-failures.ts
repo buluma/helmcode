@@ -23,19 +23,34 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
-interface ActivityRow {
-  project_title: string;
-  project_root: string;
-  thread_title: string;
-  thread_id: string;
-  turn_id: string | null;
-  tone: string;
-  kind: string;
-  summary: string;
-  payload_json: string;
-  created_at: string;
-}
+const ActivityRow = Schema.Struct({
+  project_title: Schema.String,
+  project_root: Schema.String,
+  thread_title: Schema.String,
+  thread_id: Schema.String,
+  turn_id: Schema.NullOr(Schema.String),
+  tone: Schema.String,
+  kind: Schema.String,
+  summary: Schema.String,
+  payload_json: Schema.String,
+  created_at: Schema.String,
+});
+type ActivityRow = typeof ActivityRow.Type;
+
+const decodeActivityRows = Schema.decodeUnknownEffect(Schema.Array(ActivityRow));
+const encodeActivityRowsPretty = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Array(ActivityRow), { space: 2 }),
+);
+
+// Payload is a superset of these fields (itemType, data, agentId, ...) -
+// only status/detail are read here, so the decode ignores the rest.
+const ActivityPayload = Schema.Struct({
+  status: Schema.optional(Schema.String),
+  detail: Schema.optional(Schema.String),
+});
+const decodePayload = Schema.decodeUnknownEffect(Schema.fromJsonString(ActivityPayload));
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -52,8 +67,7 @@ const write = (line: string) => Effect.sync(() => process.stdout.write(`${line}\
 
 const program = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const dbPath =
-    values.db ?? path.join(NodeOS.homedir(), ".helmcode", "userdata", "state.sqlite");
+  const dbPath = values.db ?? path.join(NodeOS.homedir(), ".helmcode", "userdata", "state.sqlite");
 
   const db = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
 
@@ -62,7 +76,7 @@ const program = Effect.gen(function* () {
     : `AND (activity.tone = 'error'
           OR json_extract(activity.payload_json, '$.status') IN ('failed', 'declined'))`;
 
-  const rows = db
+  const rawRows = db
     .prepare(
       `
       SELECT
@@ -85,12 +99,14 @@ const program = Effect.gen(function* () {
       LIMIT ?
       `,
     )
-    .all(limit) as Array<ActivityRow>;
+    .all(limit);
 
   db.close();
 
+  const rows = yield* decodeActivityRows(rawRows);
+
   if (values.json) {
-    yield* write(JSON.stringify(rows, null, 2));
+    yield* write(yield* encodeActivityRowsPretty(rows));
     return;
   }
 
@@ -103,7 +119,7 @@ const program = Effect.gen(function* () {
   }
 
   for (const row of rows) {
-    const payload = JSON.parse(row.payload_json) as { status?: string; detail?: string };
+    const payload = yield* decodePayload(row.payload_json);
     // Fall back to payload.status: rows written before tone tracked
     // status still say tone="tool" even when the tool call failed.
     const failed =
