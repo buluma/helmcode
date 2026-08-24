@@ -790,7 +790,12 @@ export function runtimeEventToActivities(
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
+          // Same failure-flagging as tool.completed: an in-progress tool
+          // can report status "failed"/"declined" before its terminal event.
+          tone:
+            event.payload.status === "failed" || event.payload.status === "declined"
+              ? "error"
+              : "tool",
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
           payload: {
@@ -817,11 +822,18 @@ export function runtimeEventToActivities(
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
+          // A completed tool call can still have failed (status "failed" or
+          // "declined"): flag it in the tone so failure history is
+          // queryable by tone alone, the same way task.updated does.
+          tone:
+            event.payload.status === "failed" || event.payload.status === "declined"
+              ? "error"
+              : "tool",
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
