@@ -33,6 +33,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import { increment, toolCallsTotal } from "../../observability/Metrics.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
@@ -790,7 +791,12 @@ export function runtimeEventToActivities(
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
+          // Same failure-flagging as tool.completed: an in-progress tool
+          // can report status "failed"/"declined" before its terminal event.
+          tone:
+            event.payload.status === "failed" || event.payload.status === "declined"
+              ? "error"
+              : "tool",
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
           payload: {
@@ -817,11 +823,18 @@ export function runtimeEventToActivities(
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
+          // A completed tool call can still have failed (status "failed" or
+          // "declined"): flag it in the tone so failure history is
+          // queryable by tone alone, the same way task.updated does.
+          tone:
+            event.payload.status === "failed" || event.payload.status === "declined"
+              ? "error"
+              : "tool",
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
@@ -2006,6 +2019,17 @@ const make = Effect.gen(function* () {
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);
+      // Tool-call outcomes are counted here (not tallied from the activity
+      // rows later) because status is only present on the "tool.completed"
+      // activity, not carried anywhere else once tone has collapsed it.
+      for (const activity of activities) {
+        if (activity.kind !== "tool.completed") continue;
+        const payload = activity.payload as { itemType?: string; status?: string };
+        yield* increment(toolCallsTotal, {
+          itemType: payload.itemType,
+          status: payload.status ?? "completed",
+        });
+      }
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
