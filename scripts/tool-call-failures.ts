@@ -16,11 +16,11 @@
  * "failed"/"declined"). Pass --all to include every tool call.
  */
 import { Database } from "bun:sqlite";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { parseArgs } from "node:util";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
-const { values } = parseArgs({
+const { values } = NodeUtil.parseArgs({
   options: {
     all: { type: "boolean", default: false },
     limit: { type: "string", default: "100" },
@@ -29,7 +29,8 @@ const { values } = parseArgs({
   },
 });
 
-const dbPath = values.db ?? join(homedir(), ".helmcode", "userdata", "state.sqlite");
+const dbPath =
+  values.db ?? NodePath.join(NodeOS.homedir(), ".helmcode", "userdata", "state.sqlite");
 const limit = Number.parseInt(values.limit ?? "100", 10);
 
 const db = new Database(dbPath, { readonly: true });
