@@ -280,6 +280,49 @@ jq -c 'select(.attributes["git.operation"] != null) | {
 }' "$TRACE_FILE"
 ```
 
+### Tool Call History And Failures Across Every Project
+
+Every tool call a provider runs (Bash, file edits, MCP tools, web search, sub-agent tool calls, ...)
+is persisted as an activity row in `projection_thread_activities`, keyed by thread and joined to
+`projection_threads` and `projection_projects`. Because `state.sqlite` is one shared database for the
+whole Helm Code home directory (not one file per project), this is already a cross-project tool-call
+log with no extra setup.
+
+Kinds to look for: `tool.started`, `tool.updated`, `tool.completed`. A failed call carries
+`tone = "error"` and `payload.status` of `"failed"` or `"declined"`.
+
+Quickest path — the bundled script:
+
+```bash
+bun scripts/tool-call-failures.ts            # failures only, most recent first
+bun scripts/tool-call-failures.ts --all      # every tool call, not just failures
+bun scripts/tool-call-failures.ts --json     # machine-readable
+bun scripts/tool-call-failures.ts --db /custom/path/state.sqlite
+```
+
+Raw SQL, if you want to shape the query yourself:
+
+```bash
+sqlite3 "${HELMCODE_HOME:-$HOME/.helmcode}/userdata/state.sqlite" <<'SQL'
+SELECT project.title, thread.title, activity.kind, activity.summary,
+       json_extract(activity.payload_json, '$.status') AS status,
+       activity.created_at
+FROM projection_thread_activities AS activity
+JOIN projection_threads AS thread ON thread.thread_id = activity.thread_id
+JOIN projection_projects AS project ON project.project_id = thread.project_id
+WHERE activity.kind = 'tool.completed'
+  AND (activity.tone = 'error'
+       OR json_extract(activity.payload_json, '$.status') IN ('failed', 'declined'))
+ORDER BY activity.created_at DESC
+LIMIT 50;
+SQL
+```
+
+Trend/volume view: the `helmcode_tool_calls_total{itemType,status}` counter increments once per
+`tool.completed` row and exports over OTLP the same way the other counters in this doc do. Use it in
+Grafana to see whether a given tool (`file_change`, `command_execution`, `mcp_tool_call`, ...) is
+failing more than usual; use the SQL/script above for the actual failing calls.
+
 ### Use Tempo When You Need A Real Trace Viewer
 
 Tempo is better than raw NDJSON when you want to:
@@ -538,6 +581,8 @@ Current high-value span and metric boundaries include:
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution
+- tool call outcomes (`helmcode_tool_calls_total`, plus the full per-call history in
+  `projection_thread_activities` — see "Tool Call History And Failures Across Every Project" above)
 
 ### Current Constraints
 

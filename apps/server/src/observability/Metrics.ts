@@ -61,6 +61,11 @@ export const providerRuntimeEventsTotal = Metric.counter("helmcode_provider_runt
   description: "Total canonical provider runtime events processed.",
 });
 
+export const toolCallsTotal = Metric.counter("helmcode_tool_calls_total", {
+  description:
+    "Total tool call lifecycle completions, labeled by itemType and status (completed/failed/declined).",
+});
+
 export const gitCommandsTotal = Metric.counter("helmcode_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
 });

@@ -33,6 +33,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import { increment, toolCallsTotal } from "../../observability/Metrics.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
@@ -2018,6 +2019,17 @@ const make = Effect.gen(function* () {
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);
+      // Tool-call outcomes are counted here (not tallied from the activity
+      // rows later) because status is only present on the "tool.completed"
+      // activity, not carried anywhere else once tone has collapsed it.
+      for (const activity of activities) {
+        if (activity.kind !== "tool.completed") continue;
+        const payload = activity.payload as { itemType?: string; status?: string };
+        yield* increment(toolCallsTotal, {
+          itemType: payload.itemType,
+          status: payload.status ?? "completed",
+        });
+      }
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
