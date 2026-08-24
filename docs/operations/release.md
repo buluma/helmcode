@@ -9,9 +9,17 @@ releases.
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - push tag matching `v*.*.*` for stable releases
   - scheduled nightly check every three hours
+  - scheduled stable check weekly, Monday 00:00 UTC (only cuts a release if `main`
+    has changes since the last stable tag)
   - manual `workflow_dispatch` for either channel
+  - **no `push: tags:` trigger.** Every release path here creates the release tag
+    itself as a side effect of publishing, so a tag pushed manually is inert —
+    nothing in the workflow reacts to it. To ship a release on demand (not
+    waiting for the weekly stable cron), dispatch it: `workflow_dispatch` stable
+    releases require the `version` input (for example
+    `gh workflow run release.yml -f channel=stable -f version=1.2.3`); nightly
+    dispatches compute their own version and don't need it.
 - Runs quality gates first: lint, typecheck, test.
 - Reads the shared production HelmCode Connect relay URL and Clerk client
   configuration before packaging clients.
@@ -261,7 +269,8 @@ Checklist:
    - Workflow file: `.github/workflows/release.yml`
    - Environment (if used): match your npm trusted publishing config
 3. Ensure npm account and org policies allow trusted publishing for the package.
-4. Create release tag `vX.Y.Z` and push; workflow will:
+4. Dispatch a stable release (`gh workflow run release.yml -f channel=stable -f
+version=X.Y.Z`, or the Actions UI); the workflow will:
    - align the release package versions to `X.Y.Z`
    - build web + server
    - invoke the CLI publish script with npm dist-tag `latest`
@@ -269,12 +278,12 @@ Checklist:
 
 ## 1) Release validation and unsigned builds
 
-There is no dry-run tag path. Pushing any accepted non-nightly tag, including
-`v0.0.0-test.1`, classifies the run as the stable channel. It publishes
-`helmcode` with npm dist-tag `latest`, creates a real GitHub Release, aliases
-the hosted app to `latest.app.t3.codes` and `app.t3.codes`, and can commit a
-version bump to `main` in the finalize job. Do not push a test tag to validate
-the workflow.
+There is no dry-run path. A manual `workflow_dispatch` with `channel=stable` and
+any accepted version, including `0.0.0-test.1`, is a real stable-channel run. It
+publishes `helmcode` with npm dist-tag `latest`, creates a real GitHub Release,
+aliases the hosted app to `latest.app.t3.codes` and `app.t3.codes`, and can
+commit a version bump to `main` in the finalize job. Do not dispatch a test
+version to validate the workflow.
 
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or
 local quality gates to validate checks and builds without shipping. To exercise
@@ -330,7 +339,7 @@ Checklist:
    - `APPLE_API_ISSUER`: Issuer ID
 10. Complete the Clerk Native API and AASA setup in
     [HelmCode Connect Clerk Setup](../internals/helmcode-connect.md#desktop-passkeys).
-11. Re-run a tag release and confirm macOS artifacts are signed/notarized and
+11. Dispatch a release and confirm macOS artifacts are signed/notarized and
     contain the expected `com.apple.developer.associated-domains` entitlement.
 
 Notes:
@@ -343,15 +352,19 @@ Notes:
 ## 4) Ongoing release checklist
 
 1. Ensure `main` is green in CI.
-2. Bump app version as needed.
-3. Create release tag: `vX.Y.Z`.
-4. Push tag.
-5. Verify workflow steps:
+2. Bump app version as needed (commit `chore(release): bump version to X.Y.Z`
+   across `apps/server`, `apps/web`, `apps/desktop`, `packages/contracts` -
+   matches what the finalize job would otherwise commit after the release, and
+   is what a scheduled stable run reads as its base version).
+3. Dispatch: `gh workflow run release.yml -f channel=stable -f version=X.Y.Z`.
+   Pushing a `vX.Y.Z` tag by hand does nothing - there is no `push: tags:`
+   trigger; see "What the workflow does" above.
+4. Verify workflow steps:
    - preflight passes
    - all matrix builds pass
    - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files
-6. Smoke test downloaded artifacts.
+5. Smoke test downloaded artifacts.
 
 ## 5) Troubleshooting
 
