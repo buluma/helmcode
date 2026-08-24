@@ -294,10 +294,10 @@ Kinds to look for: `tool.started`, `tool.updated`, `tool.completed`. A failed ca
 Quickest path — the bundled script:
 
 ```bash
-bun scripts/tool-call-failures.ts            # failures only, most recent first
-bun scripts/tool-call-failures.ts --all      # every tool call, not just failures
-bun scripts/tool-call-failures.ts --json     # machine-readable
-bun scripts/tool-call-failures.ts --db /custom/path/state.sqlite
+node scripts/tool-call-failures.ts            # failures only, most recent first
+node scripts/tool-call-failures.ts --all      # every tool call, not just failures
+node scripts/tool-call-failures.ts --json     # machine-readable
+node scripts/tool-call-failures.ts --db /custom/path/state.sqlite
 ```
 
 Raw SQL, if you want to shape the query yourself:
