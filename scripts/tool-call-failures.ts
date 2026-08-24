@@ -82,17 +82,21 @@ if (values.json) {
 } else {
   if (rows.length === 0) {
     console.log(
-      values.all ? "No tool calls found." : "No tool call failures found. Pass --all to see every call.",
+      values.all
+        ? "No tool calls found."
+        : "No tool call failures found. Pass --all to see every call.",
     );
   }
   for (const row of rows) {
     const payload = JSON.parse(row.payload_json) as { status?: string; detail?: string };
     // Fall back to payload.status: rows written before tone tracked
     // status still say tone="tool" even when the tool call failed.
-    const failed = row.tone === "error" || payload.status === "failed" || payload.status === "declined";
+    const failed =
+      row.tone === "error" || payload.status === "failed" || payload.status === "declined";
     const flag = failed ? "FAIL" : "ok  ";
+    const location = `${row.project_title} > ${row.thread_title}`;
     console.log(
-      `[${flag}] ${row.created_at}  ${row.project_title} > ${row.thread_title}  ${row.kind}  ${row.summary}` +
+      `[${flag}] ${row.created_at}  ${location}  ${row.kind}  ${row.summary}` +
         (payload.status ? `  status=${payload.status}` : ""),
     );
     if (payload.detail) {
