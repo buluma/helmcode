@@ -1072,6 +1072,11 @@ export interface DesktopBridge {
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /**
+   * Single-image file picker for a project's custom favicon/icon. Optional:
+   * older desktop builds lack it.
+   */
+  pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
+  /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
    * web callers fall back to a plain file input.
