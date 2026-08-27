@@ -1049,6 +1049,12 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  /**
+   * Hold-to-quit hint pushes: "down" when the quit shortcut is first pressed,
+   * "up" when it is released before the hold completes. Optional: older
+   * desktop builds never emit it.
+   */
+  onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

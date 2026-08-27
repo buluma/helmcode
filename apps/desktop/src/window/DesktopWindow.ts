@@ -1,3 +1,4 @@
+import { DEFAULT_CLIENT_SETTINGS } from "@helmcode/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -11,14 +12,21 @@ import * as Electron from "electron";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  QUIT_SHORTCUT_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import { makeQuitHoldHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -51,6 +59,8 @@ type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
+  | DesktopClientSettings.DesktopClientSettings
+  | ElectronApp.ElectronApp
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -261,6 +271,8 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+  const electronApp = yield* ElectronApp.ElectronApp;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -538,7 +550,32 @@ export const make = Effect.gen(function* () {
     // close-terminal shortcut can outlive the terminal that handled its first
     // press, so reject repeats before they reach the native window accelerator.
     // Deliberate presses still flow through the renderer or native menu.
+    // Chrome-style hold-to-quit: intercept the quit accelerator before the
+    // native menu sees it and only quit after the shortcut is held. The
+    // renderer shows the "Hold to Quit" hint via QUIT_SHORTCUT_CHANNEL.
+    const quitHoldHandler = makeQuitHoldHandler({
+      platform: environment.platform,
+      isEnabled: () =>
+        runPromise(
+          Effect.map(
+            clientSettings.get,
+            Option.match({
+              onNone: () => DEFAULT_CLIENT_SETTINGS.confirmQuit,
+              onSome: (settings) => settings.confirmQuit,
+            }),
+          ),
+        ),
+      notify: (state) => {
+        if (!window.isDestroyed()) {
+          window.webContents.send(QUIT_SHORTCUT_CHANNEL, state);
+        }
+      },
+      quit: () => {
+        void runPromise(electronApp.quit);
+      },
+    });
     window.webContents.on("before-input-event", (event, input) => {
+      quitHoldHandler(event, input);
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
