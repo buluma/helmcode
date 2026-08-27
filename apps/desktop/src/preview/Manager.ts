@@ -86,6 +86,10 @@ export interface PreviewTabState {
   zoomFactor: number;
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
+  /** User intent to silence this tab. Re-applied to each guest that attaches. */
+  audioMuted: boolean;
+  /** Observed from Chromium. Stays true while a muted tab keeps playing. */
+  audible: boolean;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
@@ -627,6 +631,60 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const current = tabs.get(tabId);
       if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
       const state: PreviewTabState = { ...current, ...patch, updatedAt };
+      return [
+        Option.some(state),
+        replaceMap(tabs, (copy) => {
+          copy.set(tabId, state);
+        }),
+      ] as const;
+    });
+    if (Option.isSome(next)) yield* emit(tabId, next.value);
+  });
+
+  /**
+   * Pushes a tab's committed mute onto whichever guest it currently owns,
+   * reading both at call time so an older snapshot can never roll back a
+   * mute action that landed after it. Mirrors how zoom is restored onto a
+   * fresh guest attach in `registerWebviewUnlocked`.
+   */
+  const assertTabAudioMuted = Effect.fn("PreviewManager.assertTabAudioMuted")(function* (
+    tabId: string,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || tab.webContentsId == null) return;
+    const wc = webContents.fromId(tab.webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    yield* attempt({ operation: "assertTabAudioMuted", tabId, webContentsId: wc.id }, () =>
+      wc.setAudioMuted(tab.audioMuted),
+    );
+  });
+
+  /**
+   * Publishes an observed audibility value for the guest that reported it.
+   * Shared by the `audio-state-changed` handler and the post-attach
+   * reconcile so both drop values from a guest the tab no longer owns, and
+   * both skip unchanged values: Chromium re-emits per media element, and
+   * republishing would cost an IPC push per element rather than per real
+   * transition.
+   */
+  const syncTabAudible = Effect.fn("PreviewManager.syncTabAudible")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    audible: boolean,
+  ) {
+    if (wc.isDestroyed()) return;
+    const updatedAt = yield* currentIso;
+    const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      if (
+        !current ||
+        current.webContentsId !== wc.id ||
+        webContents.fromId(wc.id) !== wc ||
+        current.audible === audible
+      ) {
+        return [Option.none<PreviewTabState>(), tabs] as const;
+      }
+      const state: PreviewTabState = { ...current, audible, updatedAt };
       return [
         Option.some(state),
         replaceMap(tabs, (copy) => {
@@ -1346,6 +1404,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) => {
       if (event.isMainFrame && !event.isSameDocument) cancelFaviconCapture();
     };
+    const audioStateChanged = (
+      event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
+    ) => runFork(syncTabAudible(tabId, wc, event.audible));
     const publishFavicon = Effect.fn("PreviewManager.publishFavicon")(function* (input: {
       readonly captureDocumentId: number;
       readonly dataUrl: string;
@@ -1524,6 +1585,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-start-loading", sync);
         wc.off("did-stop-loading", sync);
         wc.off("did-fail-load", failed as never);
+        wc.off("audio-state-changed", audioStateChanged);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
       }).pipe(Effect.ignore),
@@ -1538,6 +1600,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-start-loading", sync);
         wc.on("did-stop-loading", sync);
         wc.on("did-fail-load", failed as never);
+        wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.setWindowOpenHandler(({ url }) => {
           runFork(
@@ -1590,6 +1653,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           zoomFactor: DEFAULT_ZOOM_FACTOR,
           pictureInPicture: false,
           colorScheme: "system",
+          audioMuted: false,
+          audible: false,
           controller: "none",
           updatedAt,
         };
@@ -1653,6 +1718,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       zoomFactor: DEFAULT_ZOOM_FACTOR,
       pictureInPicture: false,
       colorScheme: "system",
+      audioMuted: false,
+      audible: false,
       controller: "none",
       updatedAt,
     };
@@ -1744,7 +1811,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         : yield* attempt({ operation: "registerWebview.getZoomFactor", tabId, webContentsId }, () =>
             wc.getZoomFactor(),
           );
+    // A replacement guest attaches unmuted, so reassert the tab's committed
+    // mute before it is published rather than letting it emit audio the user
+    // already silenced. Reconciled again after attach, below, the same way a
+    // race with a concurrent setAudioMuted is handled there.
+    yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
+      wc.setAudioMuted(currentTab.audioMuted),
+    );
     yield* attachListeners(tabId, wc);
+    const readAudible = attempt(
+      { operation: "registerWebview.readAudible", tabId, webContentsId },
+      () => wc.isCurrentlyAudible(),
+    ).pipe(Effect.orElseSucceed(() => false));
+    const attachedAudible = yield* readAudible;
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
       Effect.gen(function* () {
@@ -1767,6 +1846,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           zoomFactor,
+          audible: attachedAudible,
           updatedAt: registeredAt,
         };
         return [
@@ -1788,8 +1868,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
+    // Best-effort here, unlike in setAudioMuted: a guest that dies mid-attach
+    // must not fail the registration it was attaching for.
+    yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
     runFork(restoreControlSession(tabId, wc));
     yield* emit(tabId, registered);
+    // Transitions that fired before the tab owned this guest were dropped by
+    // syncTabAudible's ownership check, so re-read and reconcile through the
+    // same path the event uses.
+    yield* syncTabAudible(tabId, wc, yield* readAudible);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
       wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
     );
@@ -1839,6 +1926,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
         pictureInPicture: current?.pictureInPicture ?? false,
         colorScheme: current?.colorScheme ?? "system",
+        audioMuted: current?.audioMuted ?? false,
+        audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         updatedAt,
       };
@@ -2139,6 +2228,39 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) return;
     yield* applyColorScheme(tabId, wc, colorScheme);
+  });
+
+  const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
+    tabId: string,
+    audioMuted: boolean,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    // Commit and apply under the tab's lifecycle lock, then assert the
+    // committed value rather than this call's argument. Two overlapping
+    // toggles would otherwise be free to commit in one order and reach
+    // Chromium in the other, leaving the icon disagreeing with the guest.
+    yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        // Record the intent even when no guest is attached yet — it is
+        // re-applied by registerWebview when one arrives.
+        const previous = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.audioMuted;
+        const committed = previous !== undefined && previous !== audioMuted;
+        if (committed) {
+          yield* update(tabId, { audioMuted });
+        }
+        // Roll the commit back if Chromium refused: reporting success here
+        // would leave the tab drawn as muted while it keeps playing.
+        yield* assertTabAudioMuted(tabId).pipe(
+          Effect.tapError(() =>
+            committed ? update(tabId, { audioMuted: previous }) : Effect.void,
+          ),
+        );
+      }),
+    );
   });
 
   const captureScreenshot = Effect.fn("PreviewManager.captureScreenshot")(function* (
@@ -3432,6 +3554,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     revealArtifact,
     saveRecording,
     setAnnotationTheme,
+    setAudioMuted,
     setColorScheme,
     setMainWindow,
     startRecording,
@@ -3729,6 +3852,10 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setAudioMuted: (
+      tabId: string,
+      audioMuted: boolean,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
     readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
@@ -3826,6 +3953,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     resetZoom: operations.resetZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
+    setAudioMuted: operations.setAudioMuted,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {
       yield* browserSession

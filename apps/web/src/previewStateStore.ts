@@ -30,6 +30,8 @@ export interface DesktopPreviewOverlay {
   colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
+  audioMuted: boolean;
+  audible: boolean;
 }
 
 export interface ThreadPreviewState {

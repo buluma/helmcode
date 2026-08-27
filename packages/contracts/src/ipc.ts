@@ -557,6 +557,10 @@ export interface DesktopPreviewTabState {
   /** Whether this tab is currently mirrored into a desktop picture-in-picture window. */
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
+  /** User intent to silence this tab. Re-applied to each guest that attaches. */
+  audioMuted: boolean;
+  /** Observed from Chromium. Stays true while a muted tab keeps playing. */
+  audible: boolean;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
@@ -596,6 +600,8 @@ export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> 
   zoomFactor: Schema.Number,
   pictureInPicture: Schema.Boolean,
   colorScheme: DesktopPreviewColorSchemeSchema,
+  audioMuted: Schema.Boolean,
+  audible: Schema.Boolean,
   controller: Schema.Literals(["human", "agent", "none"]),
   favicon: Schema.optionalKey(DesktopPreviewFaviconSchema),
   updatedAt: Schema.String,
@@ -974,6 +980,11 @@ export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   colorScheme: DesktopPreviewColorSchemeSchema,
 });
 
+export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  audioMuted: Schema.Boolean,
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1112,6 +1123,11 @@ export interface DesktopPreviewBridge {
    * override). Persists per tab and is re-applied across webview swaps.
    */
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  /**
+   * Mute or unmute this tab's audio. Persists per tab and is re-applied
+   * across webview swaps.
+   */
+  setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */

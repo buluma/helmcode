@@ -12,6 +12,8 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import {
@@ -38,6 +40,7 @@ import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
+import { previewBridge } from "./preview/previewBridge";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
@@ -467,6 +470,36 @@ function PreviewFavicon({
   );
 }
 
+/**
+ * Per-tab mute toggle. Only rendered for preview tabs that are currently
+ * audible or already muted, so silent tabs don't pay for an extra icon.
+ */
+function PreviewMuteButton({
+  tabId,
+  audioMuted,
+  audible,
+}: {
+  tabId: string;
+  audioMuted: boolean;
+  audible: boolean;
+}) {
+  if (!audible && !audioMuted) return null;
+  const label = audioMuted ? "Unmute tab" : "Mute tab";
+  return (
+    <button
+      type="button"
+      className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        void previewBridge?.setAudioMuted(tabId, !audioMuted);
+      }}
+    >
+      {audioMuted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+    </button>
+  );
+}
+
 function SurfaceIcon({
   surface,
   sessions,
@@ -684,6 +717,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     />
                     <TooltipPopup>{title}</TooltipPopup>
                   </Tooltip>
+                  {surface.kind === "preview" && surface.resourceId ? (
+                    <PreviewMuteButton
+                      tabId={surface.resourceId}
+                      audioMuted={props.desktopByTabId[surface.resourceId]?.audioMuted ?? false}
+                      audible={props.desktopByTabId[surface.resourceId]?.audible ?? false}
+                    />
+                  ) : null}
                 </div>
               );
             })}
