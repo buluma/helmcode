@@ -1031,6 +1031,11 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /**
+   * The OS locale, e.g. "en-GB" — normalized from platform-specific
+   * identifiers. Optional: older desktop builds lack it.
+   */
+  getSystemLocale?: () => string | null;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
