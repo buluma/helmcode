@@ -26,6 +26,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -52,6 +53,7 @@ interface RightPanelTabsProps {
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -439,8 +441,18 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ url }: { url: string | null }) {
-  const faviconUrl = faviconUrlForOrigin(url, 32);
+function PreviewFavicon({
+  url,
+  capturedDataUrl,
+}: {
+  url: string | null;
+  capturedDataUrl: string | undefined;
+}) {
+  // A favicon captured straight from the guest page (see FaviconCapture.ts)
+  // is preferred over the best-effort external favicon lookup below: it
+  // reflects what the page itself is currently serving, including apps that
+  // aren't reachable from outside the sandbox.
+  const faviconUrl = capturedDataUrl ?? faviconUrlForOrigin(url, 32);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3 shrink-0" />;
   return (
@@ -460,17 +472,22 @@ function SurfaceIcon({
   sessions,
   theme,
   pullRequestStatuses,
+  desktopByTabId,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   theme: "light" | "dark";
   pullRequestStatuses: Readonly<Record<string, PullRequestTabStatus>> | undefined;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
 }) {
   switch (surface.kind) {
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-      return <PreviewFavicon url={url} />;
+      const capturedDataUrl = surface.resourceId
+        ? desktopByTabId[surface.resourceId]?.favicon?.dataUrl
+        : undefined;
+      return <PreviewFavicon url={url} capturedDataUrl={capturedDataUrl} />;
     }
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
@@ -642,6 +659,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         sessions={props.previewSessions}
                         theme={resolvedTheme}
                         pullRequestStatuses={props.pullRequestStatuses}
+                        desktopByTabId={props.desktopByTabId}
                       />
                       {pending ? (
                         <span
