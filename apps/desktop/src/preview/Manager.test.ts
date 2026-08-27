@@ -170,6 +170,8 @@ const makeTestPreviewWebContents = (
     isLoading: () => false,
     getZoomFactor: () => 1,
     setZoomFactor: vi.fn(),
+    setAudioMuted: vi.fn(),
+    isCurrentlyAudible: () => false,
     on: vi.fn(),
     off: vi.fn(),
     ipc: { on: vi.fn(), off: vi.fn() },
@@ -337,6 +339,8 @@ describe("PreviewManager", () => {
           isLoading: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           loadURL,
           on: vi.fn((event: string, listener: (...args: never[]) => void) => {
             listeners.set(event, listener);
@@ -395,6 +399,8 @@ describe("PreviewManager", () => {
             return effectiveZoom;
           },
           setZoomFactor,
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
             listeners.set(event, listener);
           }),
@@ -453,6 +459,8 @@ describe("PreviewManager", () => {
           isLoading: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: replacementSetZoomFactor,
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: { on: vi.fn(), off: vi.fn() },
@@ -493,6 +501,8 @@ describe("PreviewManager", () => {
               isLoading: () => false,
               getZoomFactor: () => 1,
               setZoomFactor: vi.fn(),
+              setAudioMuted: vi.fn(),
+              isCurrentlyAudible: () => false,
               on: vi.fn(),
               off: vi.fn(),
               ipc: { on: vi.fn(), off: vi.fn() },
@@ -545,6 +555,120 @@ describe("PreviewManager", () => {
           features: [{ name: "prefers-color-scheme", value: "" }],
         });
         expect(states.at(-1)?.colorScheme).toBe("system");
+      }),
+    ),
+  );
+
+  const makeTestAudioWebContents = (
+    id: number,
+    onListeners?: Map<string, (...args: unknown[]) => void>,
+  ) =>
+    ({
+      id,
+      isDestroyed: () => false,
+      getType: () => "webview",
+      getURL: () => "https://example.com",
+      getTitle: () => "Example",
+      isLoading: () => false,
+      getZoomFactor: () => 1,
+      setZoomFactor: vi.fn(),
+      setAudioMuted: vi.fn(),
+      isCurrentlyAudible: () => false,
+      on: onListeners
+        ? vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            onListeners.set(event, listener);
+          })
+        : vi.fn(),
+      off: vi.fn(),
+      ipc: { on: vi.fn(), off: vi.fn() },
+      send: webviewSend,
+      navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+      setWindowOpenHandler: vi.fn(),
+      debugger: {
+        isAttached: () => false,
+        attach: vi.fn(),
+        sendCommand: vi.fn(async () => undefined),
+        on: vi.fn(),
+        off: vi.fn(),
+      },
+    }) as unknown as { readonly setAudioMuted: ReturnType<typeof vi.fn> } & Electron.WebContents;
+
+  effectIt.effect("mutes and unmutes a tab, pushing the committed value to Chromium", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestAudioWebContents(42);
+        fromId.mockReturnValue(wc as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_mute");
+        yield* manager.registerWebview("tab_mute", 42);
+        wc.setAudioMuted.mockClear();
+
+        yield* manager.setAudioMuted("tab_mute", true);
+
+        expect(wc.setAudioMuted).toHaveBeenLastCalledWith(true);
+        expect(states.at(-1)?.audioMuted).toBe(true);
+
+        yield* manager.setAudioMuted("tab_mute", false);
+
+        expect(wc.setAudioMuted).toHaveBeenLastCalledWith(false);
+        expect(states.at(-1)?.audioMuted).toBe(false);
+      }),
+    ),
+  );
+
+  effectIt.effect("restores the committed mute onto a replacement guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const first = makeTestAudioWebContents(42);
+        fromId.mockReturnValue(first as never);
+
+        yield* manager.createTab("tab_mute_replace");
+        yield* manager.registerWebview("tab_mute_replace", 42);
+        yield* manager.setAudioMuted("tab_mute_replace", true);
+
+        const replacement = makeTestAudioWebContents(43);
+        fromId.mockReturnValue(replacement as never);
+
+        yield* manager.registerWebview("tab_mute_replace", 43);
+
+        expect(replacement.setAudioMuted).toHaveBeenCalledWith(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("mirrors audio-state-changed events into audible", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        const wc = makeTestAudioWebContents(42, listeners);
+        fromId.mockReturnValue(wc as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_audible");
+        yield* manager.registerWebview("tab_audible", 42);
+
+        expect(states.at(-1)?.audible).toBe(false);
+
+        listeners.get("audio-state-changed")?.({ audible: true });
+        yield* Effect.yieldNow;
+
+        expect(states.at(-1)?.audible).toBe(true);
+
+        listeners.get("audio-state-changed")?.({ audible: false });
+        yield* Effect.yieldNow;
+
+        expect(states.at(-1)?.audible).toBe(false);
       }),
     ),
   );
@@ -638,6 +762,8 @@ describe("PreviewManager", () => {
           isLoading: () => loading,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
             listeners.set(event, listener);
           }),
@@ -728,6 +854,8 @@ describe("PreviewManager", () => {
           isLoading: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn((event: string, listener: (...args: never[]) => void) => {
             listeners.set(event, listener);
           }),
@@ -817,6 +945,8 @@ describe("PreviewManager", () => {
             isLoading: () => false,
             getZoomFactor: () => 1,
             setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
             on: vi.fn(),
             off: vi.fn(),
             ipc: { on: vi.fn(), off: vi.fn() },
@@ -1027,6 +1157,8 @@ describe("PreviewManager", () => {
           isDevToolsOpened: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: { on: vi.fn(), off: vi.fn() },
@@ -1107,6 +1239,8 @@ describe("PreviewManager", () => {
           isLoading: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: { on: vi.fn(), off: vi.fn() },
@@ -1496,6 +1630,8 @@ describe("PreviewManager", () => {
           isFocused: () => true,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
             listeners.set(event, listener);
           }),
@@ -1527,6 +1663,72 @@ describe("PreviewManager", () => {
 
         listeners.get("did-start-navigation")?.({}, "https://example.com/next", false, true);
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("navigates the guest history when the thumb-button ipc fires", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let mouseNavigate: ((event: unknown, payload: unknown) => void) | undefined;
+        const goBack = vi.fn();
+        const goForward = vi.fn();
+        let canGoBack = true;
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof mouseNavigate) => {
+              if (channel === "preview:mouse-navigate") mouseNavigate = listener;
+            }),
+            off: vi.fn(),
+            removeListener: vi.fn(),
+          },
+          send: webviewSend,
+          navigationHistory: {
+            canGoBack: () => canGoBack,
+            canGoForward: () => true,
+            goBack,
+            goForward,
+          },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_nav");
+        yield* manager.registerWebview("tab_nav", 42);
+        expect(mouseNavigate).toBeDefined();
+
+        mouseNavigate?.({}, { direction: "back" });
+        yield* Effect.yieldNow;
+        expect(goBack).toHaveBeenCalledOnce();
+
+        mouseNavigate?.({}, { direction: "forward" });
+        yield* Effect.yieldNow;
+        expect(goForward).toHaveBeenCalledOnce();
+
+        // Ignores unknown payloads and never navigates when history is exhausted.
+        mouseNavigate?.({}, { direction: "sideways" });
+        canGoBack = false;
+        mouseNavigate?.({}, { direction: "back" });
+        yield* Effect.yieldNow;
+        expect(goBack).toHaveBeenCalledOnce();
       }),
     ),
   );
@@ -1618,6 +1820,8 @@ describe("PreviewManager", () => {
           isDevToolsOpened: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: {
@@ -1716,6 +1920,8 @@ describe("PreviewManager", () => {
           focus,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: {
@@ -1869,6 +2075,8 @@ describe("PreviewManager", () => {
           isDevToolsOpened: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: {
@@ -1936,6 +2144,8 @@ describe("PreviewManager", () => {
           isDevToolsOpened: () => false,
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
           on: vi.fn(),
           off: vi.fn(),
           ipc: { on: vi.fn(), off: vi.fn() },

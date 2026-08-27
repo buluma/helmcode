@@ -12,6 +12,8 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import {
@@ -26,6 +28,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -37,6 +40,7 @@ import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
+import { previewBridge } from "./preview/previewBridge";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
@@ -52,6 +56,7 @@ interface RightPanelTabsProps {
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -439,8 +444,18 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ url }: { url: string | null }) {
-  const faviconUrl = faviconUrlForOrigin(url, 32);
+function PreviewFavicon({
+  url,
+  capturedDataUrl,
+}: {
+  url: string | null;
+  capturedDataUrl: string | undefined;
+}) {
+  // A favicon captured straight from the guest page (see FaviconCapture.ts)
+  // is preferred over the best-effort external favicon lookup below: it
+  // reflects what the page itself is currently serving, including apps that
+  // aren't reachable from outside the sandbox.
+  const faviconUrl = capturedDataUrl ?? faviconUrlForOrigin(url, 32);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3 shrink-0" />;
   return (
@@ -455,22 +470,57 @@ function PreviewFavicon({ url }: { url: string | null }) {
   );
 }
 
+/**
+ * Per-tab mute toggle. Only rendered for preview tabs that are currently
+ * audible or already muted, so silent tabs don't pay for an extra icon.
+ */
+function PreviewMuteButton({
+  tabId,
+  audioMuted,
+  audible,
+}: {
+  tabId: string;
+  audioMuted: boolean;
+  audible: boolean;
+}) {
+  if (!audible && !audioMuted) return null;
+  const label = audioMuted ? "Unmute tab" : "Mute tab";
+  return (
+    <button
+      type="button"
+      className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        void previewBridge?.setAudioMuted(tabId, !audioMuted);
+      }}
+    >
+      {audioMuted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+    </button>
+  );
+}
+
 function SurfaceIcon({
   surface,
   sessions,
   theme,
   pullRequestStatuses,
+  desktopByTabId,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   theme: "light" | "dark";
   pullRequestStatuses: Readonly<Record<string, PullRequestTabStatus>> | undefined;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
 }) {
   switch (surface.kind) {
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-      return <PreviewFavicon url={url} />;
+      const capturedDataUrl = surface.resourceId
+        ? desktopByTabId[surface.resourceId]?.favicon?.dataUrl
+        : undefined;
+      return <PreviewFavicon url={url} capturedDataUrl={capturedDataUrl} />;
     }
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
@@ -642,6 +692,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         sessions={props.previewSessions}
                         theme={resolvedTheme}
                         pullRequestStatuses={props.pullRequestStatuses}
+                        desktopByTabId={props.desktopByTabId}
                       />
                       {pending ? (
                         <span
@@ -666,6 +717,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     />
                     <TooltipPopup>{title}</TooltipPopup>
                   </Tooltip>
+                  {surface.kind === "preview" && surface.resourceId ? (
+                    <PreviewMuteButton
+                      tabId={surface.resourceId}
+                      audioMuted={props.desktopByTabId[surface.resourceId]?.audioMuted ?? false}
+                      audible={props.desktopByTabId[surface.resourceId]?.audible ?? false}
+                    />
+                  ) : null}
                 </div>
               );
             })}
