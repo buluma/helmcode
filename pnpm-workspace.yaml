@@ -104,13 +104,37 @@ overrides:
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@expo/metro-config": 56.0.14
+  "@hono/node-server": "^1.19.15"
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   "@types/node": "catalog:"
+  "@vercel/routing-utils>path-to-regexp": "^6.3.0"
+  "@vitest/browser": "^4.1.10"
+  # Dependabot/`pnpm audit` remediation: pins the vulnerable transitive
+  # instance of each package to its patched version, scoped to the specific
+  # parent dependency where more than one major version resolves in the
+  # graph so unrelated consumers on a different major are left untouched.
+  "alchemy>undici": "^7.29.0"
+  builder-util-runtime: "^9.7.0"
   effect: "catalog:"
   expo-modules-jsi: 56.0.10
   "expo-sharing>@expo/config-plugins": 56.0.9
   "expo-sharing>@expo/config-types": 56.0.6
+  fast-uri: "^3.1.5"
+  form-data: "^4.0.6"
+  hono: "^4.12.34"
+  ip-address: "^10.3.1"
+  js-yaml: "^4.3.1"
+  "minimatch@3>brace-expansion": "^1.1.18"
+  "minimatch@5>brace-expansion": "^2.1.4"
+  "minimatch@9>brace-expansion": "^2.1.4"
+  "minimatch@10>brace-expansion": "^5.0.9"
+  nanoid: "^3.3.18"
+  "node-gyp>undici": "^6.28.0"
+  postcss: "^8.5.23"
+  shell-quote: "^1.9.0"
+  tar: "^7.5.21"
   vite: "catalog:"
+  "xcode>uuid": "^11.1.1"
   yaml: "catalog:"
 
 packageExtensions:
