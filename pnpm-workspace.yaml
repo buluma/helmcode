@@ -174,7 +174,10 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
 
+# Dev default: only install the native binaries for the current machine's
+# arch. Keeps ~2 GB of unused darwin-x64 / linux-* prebuilds out of dev
+# installs. CI and the desktop packager widen this back out (see
+# .github/workflows/ci.yml and scripts/build-desktop-artifact.ts).
 supportedArchitectures:
-  cpu: [current, x64]
-  libc: [current, glibc]
-  os: [current, linux]
+  cpu: [current]
+  os: [current]
