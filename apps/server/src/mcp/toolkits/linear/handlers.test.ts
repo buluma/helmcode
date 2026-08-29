@@ -240,8 +240,8 @@ describe("linear_update_issue", () => {
                 : { issue: { id: "uuid-1", team: { id: "team-1" } } },
             requests,
           ),
-          Effect.scoped,
         ),
+        Effect.scoped,
       );
     },
   );
@@ -284,8 +284,8 @@ describe("linear_comment", () => {
                 : { issue: { id: "uuid-1", team: { id: "team-1" } } },
             requests,
           ),
-          Effect.scoped,
         ),
+        Effect.scoped,
       );
     },
   );

@@ -121,10 +121,12 @@ const handlers = {
         const contains = { containsIgnoreCase: input.query };
         const matches: Record<string, unknown>[] = [{ title: contains }, { description: contains }];
         const identifierMatch = /^(?<team>[a-z0-9]{2,10})-(?<number>\d+)$/iu.exec(input.query);
-        if (identifierMatch?.groups) {
+        const team = identifierMatch?.groups?.team;
+        const number = identifierMatch?.groups?.number;
+        if (team !== undefined && number !== undefined) {
           matches.push({
-            team: { key: { eq: identifierMatch.groups.team.toUpperCase() } },
-            number: { eq: Number(identifierMatch.groups.number) },
+            team: { key: { eq: team.toUpperCase() } },
+            number: { eq: Number(number) },
           });
         }
         clauses.or = matches;
