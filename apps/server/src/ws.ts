@@ -50,6 +50,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  LinearApiKeyError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -121,6 +122,8 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { LINEAR_API_KEY_SECRET_NAME } from "./mcp/toolkits/linear/LinearClient.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@helmcode/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -348,6 +351,14 @@ function toAuthAccessStreamEvent(
   }
 }
 
+const toLinearApiKeyError = (error: unknown): LinearApiKeyError => ({
+  _tag: "LinearApiKeyError",
+  detail:
+    "error" in (error as { error?: unknown })
+      ? String((error as { error: Error }).error.message)
+      : "Failed to access the stored Linear API key.",
+});
+
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
@@ -374,6 +385,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1567,6 +1579,37 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetLinearApiKey]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetLinearApiKey,
+            secretStore.get(LINEAR_API_KEY_SECRET_NAME).pipe(
+              Effect.mapError(toLinearApiKeyError),
+              Effect.map((secret) => ({ configured: Option.isSome(secret) })),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverSetLinearApiKey]: ({ apiKey }) =>
+          observeRpcEffect(
+            WS_METHODS.serverSetLinearApiKey,
+            secretStore
+              .set(LINEAR_API_KEY_SECRET_NAME, new TextEncoder().encode(apiKey))
+              .pipe(Effect.mapError(toLinearApiKeyError), Effect.asVoid),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRemoveLinearApiKey]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRemoveLinearApiKey,
+            secretStore
+              .remove(LINEAR_API_KEY_SECRET_NAME)
+              .pipe(Effect.mapError(toLinearApiKeyError), Effect.asVoid),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",

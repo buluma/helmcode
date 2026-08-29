@@ -180,6 +180,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
   },
   {
+    id: "integrations",
+    title: "Integrations",
+    to: "/settings/providers",
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",

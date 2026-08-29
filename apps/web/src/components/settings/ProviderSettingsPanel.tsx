@@ -71,6 +71,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { LinearIntegrationSettings } from "./LinearIntegrationSettings";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
@@ -888,6 +889,12 @@ export function EnvironmentProviderSettings({
           })}
         </div>
       </SettingsSection>
+
+      <LinearIntegrationSettings
+        environmentId={environmentId}
+        environmentLabel={environmentLabel}
+        readOnly={readOnly}
+      />
 
       {isAddInstanceDialogOpen ? (
         <AddProviderInstanceDialog

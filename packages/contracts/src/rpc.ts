@@ -270,6 +270,9 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  serverGetLinearApiKey: "server.getLinearApiKey",
+  serverSetLinearApiKey: "server.setLinearApiKey",
+  serverRemoveLinearApiKey: "server.removeLinearApiKey",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -429,6 +432,39 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+export const LinearApiKeyStatus = Schema.Struct({
+  /** Whether a Linear API key is currently stored on the server. */
+  configured: Schema.Boolean,
+});
+export type LinearApiKeyStatus = typeof LinearApiKeyStatus.Type;
+
+export const LinearApiKeyError = Schema.Union([
+  Schema.TaggedStruct("LinearApiKeyError", { detail: Schema.String }),
+]);
+export type LinearApiKeyError = typeof LinearApiKeyError.Type;
+
+export const WsServerGetLinearApiKeyRpc = Rpc.make(WS_METHODS.serverGetLinearApiKey, {
+  payload: Schema.Struct({}),
+  success: LinearApiKeyStatus,
+  error: Schema.Union([LinearApiKeyError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerSetLinearApiKeyRpc = Rpc.make(WS_METHODS.serverSetLinearApiKey, {
+  payload: Schema.Struct({
+    apiKey: Schema.String.check(Schema.isTrimmed()).check(
+      Schema.isNonEmpty({ description: "Required value." }),
+    ),
+  }),
+  success: Schema.Void,
+  error: Schema.Union([LinearApiKeyError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerRemoveLinearApiKeyRpc = Rpc.make(WS_METHODS.serverRemoveLinearApiKey, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: Schema.Union([LinearApiKeyError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
@@ -988,6 +1024,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsServerGetLinearApiKeyRpc,
+  WsServerSetLinearApiKeyRpc,
+  WsServerRemoveLinearApiKeyRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
