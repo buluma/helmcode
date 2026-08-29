@@ -135,7 +135,7 @@ describe("linear_search_issues", () => {
         const filter = requests[0]!.variables.filter as {
           readonly or?: ReadonlyArray<Record<string, unknown>>;
           readonly team?: { readonly key?: { readonly eq?: string } };
-          readonly number?: number;
+          readonly number?: { readonly eq?: number };
         };
         assert.deepEqual(filter.team, { key: { eq: "SHA" } });
         assert.deepEqual(filter.number, { eq: 162 });
@@ -159,7 +159,7 @@ describe("linear_search_issues", () => {
       yield* LinearToolkitHandlers.linear_search_issues({ query: "sha-7" });
       const filter = requests[0]!.variables.filter as {
         readonly team?: { readonly key?: { readonly eq?: string } };
-        readonly number?: number;
+        readonly number?: { readonly eq?: number };
       };
       assert.equal(filter.team?.key?.eq, "SHA");
       assert.deepEqual(filter.number, { eq: 7 });
