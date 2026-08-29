@@ -55,7 +55,7 @@ const IssueResult = Schema.Struct({
 const getIssueExecute = (client: LinearClient["Service"]) =>
   client.execute(
     "get-issue",
-    `query ViewIssue($identifier: String!) { issue(identifier: $identifier) { id } }`,
+    `query ViewIssue($identifier: String!) { issue(id: $identifier) { id } }`,
     { identifier: "LIN-123" },
     IssueResult,
   );
