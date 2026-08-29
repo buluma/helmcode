@@ -12,9 +12,6 @@ import {
   LinearSearchIssuesResult,
   LinearToolkit,
   LinearUpdateIssueInput,
-  LinearUpdateIssueResult,
-  LinearCommentResult,
-  LinearCreateIssueResult,
   type LinearIssueRefInput,
   type LinearIssueState,
 } from "./tools.ts";
@@ -34,6 +31,31 @@ const IssueFragment = `
 
 const IssueWithTeamId = Schema.Struct({
   issue: Schema.Struct({ id: Schema.String, team: Schema.Struct({ id: Schema.String }) }),
+});
+
+const IssueWriteRef = Schema.Struct({
+  id: Schema.String,
+  identifier: Schema.String,
+  url: Schema.String,
+  title: Schema.String,
+});
+
+const IssueCreatePayload = Schema.Struct({
+  issueCreate: Schema.Struct({ issue: IssueWriteRef }),
+});
+
+const IssueUpdatePayload = Schema.Struct({
+  issueUpdate: Schema.Struct({ issue: IssueWriteRef }),
+});
+
+const CommentCreatePayload = Schema.Struct({
+  commentCreate: Schema.Struct({
+    comment: Schema.Struct({
+      id: Schema.String,
+      url: Schema.String,
+      body: Schema.String,
+    }),
+  }),
 });
 
 export const extractIdentifier = (input: LinearIssueRefInput): string => {
@@ -64,7 +86,7 @@ const resolveIssueId = Effect.fn("Linear.resolveIssueId")(function* (
   }
   const data = yield* client.execute(
     "get-issue-id",
-    `query ViewIssue($identifier: String!) { issue(identifier: $identifier) { id team { id } } }`,
+    `query ViewIssue($identifier: String!) { issue(id: $identifier) { id team { id } } }`,
     { identifier },
     IssueWithTeamId,
   );
@@ -80,7 +102,7 @@ const handlers = {
       const identifier = extractIdentifier(input);
       const data = yield* client.execute(
         "get-issue",
-        `query ViewIssue($identifier: String!) { issue(identifier: $identifier) { ${IssueFragment} } }`,
+        `query ViewIssue($identifier: String!) { issue(id: $identifier) { ${IssueFragment} } }`,
         { identifier },
         LinearGetIssueResult,
       );
@@ -97,7 +119,15 @@ const handlers = {
       }
       if (input.query && input.query.length > 0) {
         const contains = { containsIgnoreCase: input.query };
-        clauses.or = [{ title: contains }, { description: contains }, { identifier: contains }];
+        const matches: Record<string, unknown>[] = [{ title: contains }, { description: contains }];
+        const identifierMatch = /^(?<team>[a-z0-9]{2,10})-(?<number>\d+)$/iu.exec(input.query);
+        if (identifierMatch?.groups) {
+          matches.push({
+            team: { key: { eq: identifierMatch.groups.team.toUpperCase() } },
+            number: { eq: Number(identifierMatch.groups.number) },
+          });
+        }
+        clauses.or = matches;
       }
       const data = yield* client.execute(
         "search-issues",
@@ -147,9 +177,9 @@ const handlers = {
           issueCreate(input: $input) { issue { id identifier url title } }
         }`,
         { input: inputPayload },
-        LinearCreateIssueResult,
+        IssueCreatePayload,
       );
-      return data;
+      return { issue: data.issueCreate.issue };
     }),
   linear_update_issue: (input: LinearUpdateIssueInput) =>
     Effect.gen(function* () {
@@ -190,9 +220,9 @@ const handlers = {
           issueUpdate(id: $id, input: $input) { issue { id identifier url title } }
         }`,
         { id, input: inputPayload },
-        LinearUpdateIssueResult,
+        IssueUpdatePayload,
       );
-      return data;
+      return { issue: data.issueUpdate.issue };
     }),
   linear_comment: (input: LinearCommentInput) =>
     Effect.gen(function* () {
@@ -206,10 +236,12 @@ const handlers = {
           }
         }`,
         { issueId: id, body: input.body },
-        LinearCommentResult,
+        CommentCreatePayload,
       );
-      return data;
+      return { comment: data.commentCreate.comment };
     }),
 } satisfies Parameters<typeof LinearToolkit.toLayer>[0];
+
+export const LinearToolkitHandlers = handlers;
 
 export const LinearToolkitHandlersLive = LinearToolkit.toLayer(handlers);
