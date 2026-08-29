@@ -90,8 +90,11 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         `${input.baseUrl.replace(/\/$/, "")}/chat/completions`,
       ).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
-        HttpClientRequest.setHeader("Content-Type", "application/json"),
-        HttpClientRequest.bodyText(bodyText),
+        // bodyText's own contentType arg is authoritative -- HttpBody.text
+        // defaults to "text/plain" and overwrites whatever setHeader set
+        // before it, which was silently clobbering this to text/plain and
+        // getting every request rejected with a 415 by the upstream API.
+        HttpClientRequest.bodyText(bodyText, "application/json"),
       );
 
       const response = yield* httpClient.execute(request).pipe(

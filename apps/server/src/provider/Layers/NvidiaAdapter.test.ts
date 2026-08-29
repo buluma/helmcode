@@ -20,6 +20,7 @@ import { makeNvidiaAdapter } from "./NvidiaAdapter.ts";
 
 type CapturedRequest = {
   readonly authorization: string | undefined;
+  readonly contentType: string | undefined;
   readonly body: { readonly model: string; readonly messages: ReadonlyArray<unknown> };
 };
 
@@ -38,10 +39,19 @@ const testLayer = (respond: (captured: CapturedRequest) => { status?: number; bo
         const raw =
           request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "{}";
         const parsedBody = decodeJsonString(raw) as CapturedRequest["body"];
-        const { status = 200, body } = respond({
+        const captured: CapturedRequest = {
           authorization: request.headers["authorization"],
+          contentType: request.headers["content-type"],
           body: parsedBody,
-        });
+        };
+        // Regression guard: NVIDIA's real API rejects anything but
+        // application/json with a 415, which is exactly what
+        // `bodyText(bodyText)` (no explicit content type) sent, since
+        // HttpBody.text defaults to text/plain and silently overwrites
+        // whatever `setHeader("Content-Type", ...)` set before it.
+        const { status = 200, body } = captured.contentType?.startsWith("application/json")
+          ? respond(captured)
+          : { status: 415, body: { error: "Unsupported Media Type" } };
         return HttpClientResponse.fromWeb(
           request,
           new Response(encodeJsonString(body), {
@@ -103,6 +113,7 @@ it.effect("starts a session and completes a turn against a mocked chat completio
 
     assert.equal(requests.length, 1);
     assert.equal(requests[0]!.authorization, "Bearer test-nvidia-key");
+    assert.equal(requests[0]!.contentType, "application/json");
     assert.equal(requests[0]!.body.model, "meta/llama-3.3-70b-instruct");
     assert.deepEqual(requests[0]!.body.messages, [{ role: "user", content: "Say hello." }]);
 

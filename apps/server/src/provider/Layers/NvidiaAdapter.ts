@@ -90,8 +90,11 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         `${input.baseUrl.replace(/\/$/, "")}/chat/completions`,
       ).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
-        HttpClientRequest.setHeader("Content-Type", "application/json"),
-        HttpClientRequest.bodyText(bodyText),
+        // bodyText's own contentType arg is authoritative -- HttpBody.text
+        // defaults to "text/plain" and overwrites whatever setHeader set
+        // before it, which was silently clobbering this to text/plain and
+        // getting every request rejected with 415 by NVIDIA's API.
+        HttpClientRequest.bodyText(bodyText, "application/json"),
       );
 
       const response = yield* httpClient.execute(request).pipe(
