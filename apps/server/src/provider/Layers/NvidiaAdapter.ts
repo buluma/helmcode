@@ -77,14 +77,12 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
       });
       const bodyText =
         bodyEncoded._tag === "Failure"
-          ? yield* Effect.fail(
-              new ProviderAdapterRequestError({
-                provider: NVIDIA,
-                method: "chat.completions",
-                detail: "Failed to encode request body.",
-                cause: bodyEncoded.cause,
-              }),
-            )
+          ? yield* new ProviderAdapterRequestError({
+              provider: NVIDIA,
+              method: "chat.completions",
+              detail: "Failed to encode request body.",
+              cause: bodyEncoded.cause,
+            })
           : bodyEncoded.value;
 
       const request = HttpClientRequest.post(
@@ -119,14 +117,12 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
               }),
           ),
         );
-        return yield* Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: NVIDIA,
-            method: "chat.completions",
-            detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
-            cause: new Error(`HTTP ${response.status}`),
-          }),
-        );
+        return yield* new ProviderAdapterRequestError({
+          provider: NVIDIA,
+          method: "chat.completions",
+          detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
+          cause: new Error(`HTTP ${response.status}`),
+        });
       }
 
       const responseText = yield* response.text.pipe(
@@ -161,13 +157,11 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         | string
         | undefined;
       if (!content || content.trim().length === 0) {
-        return yield* Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: NVIDIA,
-            method: "chat.completions",
-            detail: "Model returned an empty response.",
-          }),
-        );
+        return yield* new ProviderAdapterRequestError({
+          provider: NVIDIA,
+          method: "chat.completions",
+          detail: "Model returned an empty response.",
+        });
       }
 
       return content;
@@ -375,9 +369,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
     Effect.gen(function* () {
       const session = sessions.get(threadId);
       if (!session) {
-        return yield* Effect.fail(
-          new ProviderAdapterSessionNotFoundError({ provider: NVIDIA, threadId }),
-        );
+        return yield* new ProviderAdapterSessionNotFoundError({ provider: NVIDIA, threadId });
       }
 
       const turns: Array<ProviderThreadTurnSnapshot> = [];
@@ -404,9 +396,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
     Effect.gen(function* () {
       const session = sessions.get(threadId);
       if (!session) {
-        return yield* Effect.fail(
-          new ProviderAdapterSessionNotFoundError({ provider: NVIDIA, threadId }),
-        );
+        return yield* new ProviderAdapterSessionNotFoundError({ provider: NVIDIA, threadId });
       }
 
       sessions.set(threadId, { messages: session.messages.slice(0, -numTurns * 2) });
