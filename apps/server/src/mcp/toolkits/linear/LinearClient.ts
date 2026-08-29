@@ -17,7 +17,7 @@ const GraphqlEnvelope = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         message: Schema.String,
-        path: Schema.optional(Schema.Array(Schema.String)),
+        path: Schema.optional(Schema.Array(Schema.Union([Schema.String, Schema.Number]))),
       }),
     ),
   ),

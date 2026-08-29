@@ -111,6 +111,31 @@ it.effect("surfaces GraphQL errors as LinearApiError", () =>
   ),
 );
 
+it.effect("keeps the GraphQL message when an error path has a numeric segment", () =>
+  Effect.gen(function* () {
+    yield* configureKey("test-key");
+    const client = yield* LinearClient;
+    const error = yield* Effect.flip(getIssueExecute(client));
+    assert.instanceOf(error, LinearApiError);
+    assert.include(error.message, "GraphQL error");
+    assert.include(error.message, "field not found");
+    assert.notInclude(error.message, "Invalid JSON");
+  }).pipe(
+    Effect.provide(
+      makeTestLayer(
+        () =>
+          new Response(
+            JSON.stringify({
+              errors: [{ message: "field not found", path: ["issues", "nodes", 0] }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
 it.effect("decodes a successful GraphQL response into the expected schema", () =>
   Effect.gen(function* () {
     yield* configureKey("test-key");

@@ -32,8 +32,8 @@ const IssueFragment = `
   updatedAt
 `;
 
-const IssueIdOnly = Schema.Struct({
-  issue: Schema.Struct({ id: Schema.String }),
+const IssueWithTeamId = Schema.Struct({
+  issue: Schema.Struct({ id: Schema.String, team: Schema.Struct({ id: Schema.String }) }),
 });
 
 export const extractIdentifier = (input: LinearIssueRefInput): string => {
@@ -46,9 +46,10 @@ export const extractIdentifier = (input: LinearIssueRefInput): string => {
 };
 
 /**
- * Resolves an issue reference (identifier or URL) to the Linear UUID id needed
- * for mutations. Reads may use the identifier directly, but `issueUpdate` and
- * `commentCreate` require the UUID, so we always resolve through a lookup.
+ * Resolves an issue reference (identifier or URL) to the Linear UUID id and the
+ * owning team's UUID. Mutations need the issue UUID (`issueUpdate`,
+ * `commentCreate`) and the team UUID (workflow-state lookups), so both are
+ * resolved through a single lookup.
  */
 const resolveIssueId = Effect.fn("Linear.resolveIssueId")(function* (
   client: LinearClient["Service"],
@@ -63,11 +64,11 @@ const resolveIssueId = Effect.fn("Linear.resolveIssueId")(function* (
   }
   const data = yield* client.execute(
     "get-issue-id",
-    `query ViewIssue($identifier: String!) { issue(identifier: $identifier) { id } }`,
+    `query ViewIssue($identifier: String!) { issue(identifier: $identifier) { id team { id } } }`,
     { identifier },
-    IssueIdOnly,
+    IssueWithTeamId,
   );
-  return data.issue.id;
+  return { id: data.issue.id, teamId: data.issue.team.id };
 });
 
 const mapIssue = (issue: LinearIssueState) => issue;
@@ -119,8 +120,23 @@ const handlers = {
   linear_create_issue: (input: LinearCreateIssueInput) =>
     Effect.gen(function* () {
       const client = yield* LinearClient;
+      const team = yield* client.execute(
+        "resolve-team",
+        `query ResolveTeam($key: String!) { teams(filter: { key: { eq: $key } }, first: 1) { nodes { id } } }`,
+        { key: input.teamKey },
+        Schema.Struct({
+          teams: Schema.Struct({ nodes: Schema.Array(Schema.Struct({ id: Schema.String })) }),
+        }),
+      );
+      const teamId = team.teams.nodes[0]?.id;
+      if (!teamId) {
+        return yield* new LinearApiError({
+          operation: "create-issue",
+          detail: `No Linear team with key "${input.teamKey}" was found.`,
+        });
+      }
       const inputPayload: Record<string, unknown> = {
-        teamId: input.teamKey,
+        teamId,
         title: input.title,
       };
       if (input.description !== undefined) inputPayload.description = input.description;
@@ -138,7 +154,7 @@ const handlers = {
   linear_update_issue: (input: LinearUpdateIssueInput) =>
     Effect.gen(function* () {
       const client = yield* LinearClient;
-      const id = yield* resolveIssueId(client, input);
+      const { id, teamId } = yield* resolveIssueId(client, input);
       const inputPayload: Record<string, unknown> = {};
       if (input.title !== undefined) inputPayload.title = input.title;
       if (input.description !== undefined) inputPayload.description = input.description;
@@ -146,8 +162,13 @@ const handlers = {
       if (input.status !== undefined) {
         const state = yield* client.execute(
           "resolve-state",
-          `query ViewState($name: String!) { workflowStates(filter: { name: { eq: $name } }, first: 1) { nodes { id } } }`,
-          { name: input.status },
+          `query ViewState($teamId: String!, $name: String!) {
+            workflowStates(
+              filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }
+              first: 1
+            ) { nodes { id } }
+          }`,
+          { teamId, name: input.status },
           Schema.Struct({
             workflowStates: Schema.Struct({
               nodes: Schema.Array(Schema.Struct({ id: Schema.String })),
@@ -158,7 +179,7 @@ const handlers = {
         if (!stateId) {
           return yield* new LinearApiError({
             operation: "update-issue",
-            detail: `No Linear workflow state named "${input.status}" was found.`,
+            detail: `No Linear workflow state named "${input.status}" was found for the issue's team.`,
           });
         }
         inputPayload.stateId = stateId;
@@ -176,7 +197,7 @@ const handlers = {
   linear_comment: (input: LinearCommentInput) =>
     Effect.gen(function* () {
       const client = yield* LinearClient;
-      const id = yield* resolveIssueId(client, input);
+      const { id } = yield* resolveIssueId(client, input);
       const data = yield* client.execute(
         "comment",
         `mutation CreateComment($issueId: String!, $body: String!) {

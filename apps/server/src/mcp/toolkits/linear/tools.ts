@@ -111,7 +111,7 @@ export const LinearCreateIssueInput = Schema.Struct({
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
       .check(Schema.isLessThanOrEqualTo(4))
       .annotate({
-        description: "Optional priority 0-4, where 0 is urgent, 1 high, 2 medium, 3 low, 4 none.",
+        description: "Optional priority 0-4, where 0 is none, 1 urgent, 2 high, 3 medium, 4 low.",
       }),
   ),
 });
@@ -145,18 +145,27 @@ export const LinearUpdateIssueInput = Schema.Struct({
   priority: Schema.optional(
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
       .check(Schema.isLessThanOrEqualTo(4))
-      .annotate({ description: "Priority 0-4 (0 urgent ... 4 none)." }),
+      .annotate({ description: "Priority 0-4 (0 none, 1 urgent, 2 high, 3 medium, 4 low)." }),
   ),
-}).check(
-  Schema.makeFilter(
-    (input) =>
-      input.title !== undefined ||
-      input.description !== undefined ||
-      input.status !== undefined ||
-      input.priority !== undefined ||
-      "Provide at least one field to update.",
-  ),
-);
+})
+  .check(
+    Schema.makeFilter(
+      (input) =>
+        input.title !== undefined ||
+        input.description !== undefined ||
+        input.status !== undefined ||
+        input.priority !== undefined ||
+        "Provide at least one field to update.",
+    ),
+  )
+  .check(
+    Schema.makeFilter((input) => {
+      const hasIdentifier = input.identifier !== undefined;
+      const hasUrl = input.url !== undefined;
+      if (hasIdentifier === hasUrl) return "Provide exactly one of identifier or url.";
+      return true;
+    }),
+  );
 
 export type LinearUpdateIssueInput = typeof LinearUpdateIssueInput.Type;
 
@@ -175,7 +184,14 @@ export const LinearCommentInput = Schema.Struct({
     .check(Schema.isNonEmpty({ description: "Required value." }))
     .check(Schema.isMaxLength(50_000))
     .annotate({ description: "Comment body as markdown." }),
-});
+}).check(
+  Schema.makeFilter((input) => {
+    const hasIdentifier = input.identifier !== undefined;
+    const hasUrl = input.url !== undefined;
+    if (hasIdentifier === hasUrl) return "Provide exactly one of identifier or url.";
+    return true;
+  }),
+);
 export type LinearCommentInput = typeof LinearCommentInput.Type;
 export const LinearCommentResult = Schema.Struct({
   comment: Schema.Struct({

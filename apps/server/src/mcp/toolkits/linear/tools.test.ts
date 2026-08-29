@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { Tool } from "effect/unstable/ai";
 
 import {
+  LinearCommentInput,
   LinearCreateIssueInput,
   LinearGetIssueInput,
   LinearToolkit,
@@ -81,6 +82,19 @@ describe("update issue input validation", () => {
     }),
   );
 
+  it.effect("rejects both identifier and url together", () =>
+    Effect.gen(function* () {
+      const both = yield* Effect.flip(
+        Schema.decodeUnknownEffect(LinearUpdateIssueInput)({
+          identifier: "LIN-123",
+          url: "https://linear.app/acme/issue/LIN-123/my-issue",
+          title: "A new title",
+        }),
+      );
+      assert.include(String(both), "exactly one");
+    }),
+  );
+
   it.effect("rejects priorities outside the 0-4 range", () =>
     Effect.gen(function* () {
       const tooHigh = yield* Effect.flip(
@@ -90,6 +104,27 @@ describe("update issue input validation", () => {
         }),
       );
       assert.isTrue(String(tooHigh).length > 0);
+    }),
+  );
+});
+
+describe("comment input validation", () => {
+  it.effect("requires exactly one issue reference", () =>
+    Effect.gen(function* () {
+      const both = yield* Effect.flip(
+        Schema.decodeUnknownEffect(LinearCommentInput)({
+          identifier: "LIN-123",
+          url: "https://linear.app/acme/issue/LIN-123/my-issue",
+          body: "Looks good.",
+        }),
+      );
+      assert.include(String(both), "exactly one");
+
+      const valid = yield* Schema.decodeUnknownEffect(LinearCommentInput)({
+        identifier: "LIN-123",
+        body: "Looks good.",
+      });
+      assert.deepEqual(valid.body, "Looks good.");
     }),
   );
 });

@@ -60,16 +60,18 @@ export function LinearIntegrationSettings({
     setIsSaving(true);
     const result = await setKey({ environmentId, input: { apiKey: trimmed } });
     setIsSaving(false);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not save Linear API key",
-          description:
-            error instanceof Error ? error.message : "The Linear API key could not be saved.",
-        }),
-      );
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not save Linear API key",
+            description:
+              error instanceof Error ? error.message : "The Linear API key could not be saved.",
+          }),
+        );
+      }
       return;
     }
     setApiKey("");
@@ -83,16 +85,18 @@ export function LinearIntegrationSettings({
     setIsRemoving(true);
     const result = await removeKey({ environmentId, input: {} });
     setIsRemoving(false);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not remove Linear API key",
-          description:
-            error instanceof Error ? error.message : "The Linear API key could not be removed.",
-        }),
-      );
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not remove Linear API key",
+            description:
+              error instanceof Error ? error.message : "The Linear API key could not be removed.",
+          }),
+        );
+      }
       return;
     }
     refreshStatus();
@@ -124,6 +128,7 @@ export function LinearIntegrationSettings({
                 <Input
                   type="password"
                   placeholder="lin_api_…"
+                  aria-label="Linear API key"
                   autoComplete="off"
                   className="w-64"
                   value={apiKey}

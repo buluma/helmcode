@@ -453,7 +453,9 @@ export const WsServerGetLinearApiKeyRpc = Rpc.make(WS_METHODS.serverGetLinearApi
 
 export const WsServerSetLinearApiKeyRpc = Rpc.make(WS_METHODS.serverSetLinearApiKey, {
   payload: Schema.Struct({
-    apiKey: Schema.NonEmptyString,
+    apiKey: Schema.String.check(Schema.isTrimmed()).check(
+      Schema.isNonEmpty({ description: "Required value." }),
+    ),
   }),
   success: Schema.Void,
   error: Schema.Union([LinearApiKeyError, EnvironmentAuthorizationError]),
