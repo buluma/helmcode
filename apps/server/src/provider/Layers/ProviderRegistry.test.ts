@@ -105,6 +105,14 @@ const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPol
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
 
+// Polling for a provider-status-cache write (real disk I/O via
+// `NodeServices.layer`'s FileSystem) needs an actual macrotask turn, not just
+// a fiber-scheduler cycle: `Effect.yieldNow` alone can starve the real fs
+// write under CI's CPU contention, since it never hands control back to
+// Node's event loop. `TestClock.adjust` only advances virtual time and
+// doesn't help either -- the write isn't gated on the virtual clock.
+const waitForRealIo = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+
 function selectDescriptor(
   id: string,
   label: string,
@@ -1058,11 +1066,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             let cachedProvider = yield* readProviderStatusCache(filePath);
             for (
               let attempt = 0;
-              attempt < 50 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
+              attempt < 200 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
               attempt += 1
             ) {
               yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
+              yield* waitForRealIo;
               cachedProvider = yield* readProviderStatusCache(filePath);
             }
 
@@ -1183,11 +1191,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               let cachedProvider = yield* readProviderStatusCache(filePath);
               for (
                 let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== authoritativeProvider.checkedAt;
+                attempt < 200 && cachedProvider?.checkedAt !== authoritativeProvider.checkedAt;
                 attempt += 1
               ) {
                 yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
+                yield* waitForRealIo;
                 cachedProvider = yield* readProviderStatusCache(filePath);
               }
 
@@ -1196,11 +1204,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               yield* PubSub.publish(changes, failedProvider);
               for (
                 let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== failedProvider.checkedAt;
+                attempt < 200 && cachedProvider?.checkedAt !== failedProvider.checkedAt;
                 attempt += 1
               ) {
                 yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
+                yield* waitForRealIo;
                 cachedProvider = yield* readProviderStatusCache(filePath);
               }
 
