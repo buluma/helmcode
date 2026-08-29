@@ -1,6 +1,6 @@
 {
   "name": "helmcode",
-  "version": "0.0.45",
+  "version": "0.0.46",
   "description": "Server-only CLI for Helm Code — drive coding-agent CLIs (Claude Code, Codex, Cursor, Grok Build, OpenCode) from a web, desktop, or mobile client.",
   "keywords": [
     "agent",

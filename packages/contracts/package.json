@@ -1,6 +1,6 @@
 {
   "name": "@helmcode/contracts",
-  "version": "0.0.45",
+  "version": "0.0.46",
   "private": true,
   "files": [
     "dist"
