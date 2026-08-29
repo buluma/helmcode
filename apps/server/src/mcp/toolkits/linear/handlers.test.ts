@@ -134,13 +134,12 @@ describe("linear_search_issues", () => {
 
         const filter = requests[0]!.variables.filter as {
           readonly or?: ReadonlyArray<Record<string, unknown>>;
+          readonly team?: { readonly key?: { readonly eq?: string } };
+          readonly number?: { readonly eq?: number };
         };
-        assert.equal(filter.or?.length, 3);
-        assert.deepEqual(filter.or?.[2], {
-          team: { key: { eq: "SHA" } },
-          number: { eq: 162 },
-        });
-        assert.deepEqual(filter.or?.[0], { title: { containsIgnoreCase: "SHA-162" } });
+        assert.deepEqual(filter.team, { key: { eq: "SHA" } });
+        assert.deepEqual(filter.number, { eq: 162 });
+        assert.isUndefined(filter.or);
       }).pipe(
         Effect.provide(
           makeClientLayer(
@@ -159,11 +158,11 @@ describe("linear_search_issues", () => {
       yield* configureKey("test-key");
       yield* LinearToolkitHandlers.linear_search_issues({ query: "sha-7" });
       const filter = requests[0]!.variables.filter as {
-        readonly or?: ReadonlyArray<{
-          readonly team?: { readonly key?: { readonly eq?: string } };
-        }>;
+        readonly team?: { readonly key?: { readonly eq?: string } };
+        readonly number?: { readonly eq?: number };
       };
-      assert.equal(filter.or?.[2]?.team?.key?.eq, "SHA");
+      assert.equal(filter.team?.key?.eq, "SHA");
+      assert.deepEqual(filter.number, { eq: 7 });
     }).pipe(
       Effect.provide(makeClientLayer(() => ({ issues: { nodes: [] } }), requests)),
       Effect.scoped,

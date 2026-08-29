@@ -118,18 +118,19 @@ const handlers = {
         filter.state = { name: { in: input.statuses } };
       }
       if (input.query && input.query.length > 0) {
-        const contains = { containsIgnoreCase: input.query };
-        const matches: Record<string, unknown>[] = [{ title: contains }, { description: contains }];
         const identifierMatch = /^(?<team>[a-z0-9]{2,10})-(?<number>\d+)$/iu.exec(input.query);
         const team = identifierMatch?.groups?.team;
         const number = identifierMatch?.groups?.number;
         if (team !== undefined && number !== undefined) {
-          matches.push({
-            team: { key: { eq: team.toUpperCase() } },
-            number: { eq: Number(number) },
-          });
+          // Exact identifier match: use a precise team+number filter. Mixing a
+          // string clause into the same `or` makes Linear's filter fall back to
+          // matching the whole team, so identifiers never share an `or`.
+          filter.team = { key: { eq: team.toUpperCase() } };
+          filter.number = { eq: Number(number) };
+        } else {
+          const contains = { containsIgnoreCase: input.query };
+          clauses.or = [{ title: contains }, { description: contains }];
         }
-        clauses.or = matches;
       }
       const data = yield* client.execute(
         "search-issues",

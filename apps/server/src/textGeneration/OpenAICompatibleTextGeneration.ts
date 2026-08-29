@@ -124,13 +124,11 @@ const callChatCompletions = (
             }),
         ),
       );
-      return yield* Effect.fail(
-        new OpenAICompatibleTextGenerationRequestError({
-          operation: payload.model,
-          detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
-          cause: new Error(`HTTP ${response.status}`),
-        }),
-      );
+      return yield* new OpenAICompatibleTextGenerationRequestError({
+        operation: payload.model,
+        detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
+        cause: new Error(`HTTP ${response.status}`),
+      });
     }
 
     const responseText = yield* response.text.pipe(
