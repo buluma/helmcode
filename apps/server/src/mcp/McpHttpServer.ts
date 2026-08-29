@@ -22,6 +22,9 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { LinearToolkitHandlersLive } from "./toolkits/linear/handlers.ts";
+import * as LinearClient from "./toolkits/linear/LinearClient.ts";
+import { LinearToolkit } from "./toolkits/linear/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -216,6 +219,11 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+const LinearToolkitRegistrationLive = McpServer.toolkit(LinearToolkit).pipe(
+  Layer.provide(LinearToolkitHandlersLive),
+  Layer.provide(LinearClient.layer),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "Helm Code",
   version: packageJson.version,
@@ -223,4 +231,7 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = PreviewToolkitRegistrationLive.pipe(
+  Layer.provideMerge(LinearToolkitRegistrationLive),
+  Layer.provideMerge(McpTransportLive),
+);

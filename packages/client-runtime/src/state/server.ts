@@ -756,6 +756,23 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    getLinearApiKey: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:get-linear-api-key",
+      tag: WS_METHODS.serverGetLinearApiKey,
+      staleTimeMs: 30_000,
+    }),
+    setLinearApiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-linear-api-key",
+      tag: WS_METHODS.serverSetLinearApiKey,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    removeLinearApiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:remove-linear-api-key",
+      tag: WS_METHODS.serverRemoveLinearApiKey,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
