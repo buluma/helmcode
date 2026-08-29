@@ -275,7 +275,22 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         });
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.ignoreCause(Effect.logError("OpenRouter adapter turn failed", { cause })),
+          Effect.gen(function* () {
+            yield* Effect.logError("OpenRouter adapter turn failed", { cause });
+            yield* publish({
+              eventId: yield* nextEventId,
+              provider: OPENROUTER,
+              threadId: turnInput.threadId,
+              turnId,
+              createdAt: yield* nowIso,
+              type: "session.exited",
+              payload: {
+                reason: cause instanceof Error ? cause.message : "OpenRouter adapter turn failed.",
+                recoverable: false,
+                exitKind: "error",
+              },
+            });
+          }),
         ),
       );
 
