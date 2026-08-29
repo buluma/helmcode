@@ -187,13 +187,7 @@ it.effect("publishes session.exited when OpenRouter responds with a non-200 stat
     const exitedEvent = runtimeEvents.find((event) => event.type === "session.exited");
     assert.isDefined(exitedEvent);
     if (exitedEvent?.type === "session.exited") {
-      // NOTE: the adapter's `catchCause` checks `cause instanceof Error`, but
-      // `Effect.catchCause` hands it the wrapping `Cause`, not the failure
-      // value itself, so this branch never matches and the specific detail
-      // (here, "HTTP 500: ...") never reaches the emitted event -- only the
-      // generic fallback string does. Asserting the current (arguably buggy)
-      // behavior; see conversation notes for the observability gap this causes.
-      assert.equal(exitedEvent.payload.reason, "OpenRouter adapter turn failed.");
+      assert.include(exitedEvent.payload.reason, "HTTP 500");
       assert.isFalse(exitedEvent.payload.recoverable);
       assert.equal(exitedEvent.payload.exitKind, "error");
     }
@@ -232,9 +226,7 @@ it.effect("publishes session.exited when the model returns an empty response", (
     const exitedEvent = runtimeEvents.find((event) => event.type === "session.exited");
     assert.isDefined(exitedEvent);
     if (exitedEvent?.type === "session.exited") {
-      // Same generic-fallback gap as the HTTP-error case above: the adapter's
-      // "Model returned an empty response." detail never reaches this event.
-      assert.equal(exitedEvent.payload.reason, "OpenRouter adapter turn failed.");
+      assert.include(exitedEvent.payload.reason, "empty response");
       assert.isFalse(exitedEvent.payload.recoverable);
     }
   }),
