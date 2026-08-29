@@ -5,6 +5,7 @@ import type {
 } from "../Services/ProviderAdapter.ts";
 import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -285,7 +286,12 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
               createdAt: yield* nowIso,
               type: "session.exited",
               payload: {
-                reason: cause instanceof Error ? cause.message : "NVIDIA adapter turn failed.",
+                reason: (() => {
+                  const squashed = Cause.squash(cause);
+                  return squashed instanceof Error && squashed.message.length > 0
+                    ? squashed.message
+                    : "NVIDIA adapter turn failed.";
+                })(),
                 recoverable: false,
                 exitKind: "error",
               },

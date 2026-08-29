@@ -5,6 +5,7 @@ import type {
 } from "../Services/ProviderAdapter.ts";
 import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -275,7 +276,27 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         });
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.ignoreCause(Effect.logError("OpenRouter adapter turn failed", { cause })),
+          Effect.gen(function* () {
+            yield* Effect.logError("OpenRouter adapter turn failed", { cause });
+            yield* publish({
+              eventId: yield* nextEventId,
+              provider: OPENROUTER,
+              threadId: turnInput.threadId,
+              turnId,
+              createdAt: yield* nowIso,
+              type: "session.exited",
+              payload: {
+                reason: (() => {
+                  const squashed = Cause.squash(cause);
+                  return squashed instanceof Error && squashed.message.length > 0
+                    ? squashed.message
+                    : "OpenRouter adapter turn failed.";
+                })(),
+                recoverable: false,
+                exitKind: "error",
+              },
+            });
+          }),
         ),
       );
 
