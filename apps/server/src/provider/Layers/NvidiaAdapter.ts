@@ -300,7 +300,13 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         ),
       );
 
-      yield* Effect.forkChild(work);
+      // The caller (ProviderCommandReactor) runs sendTurn inside a
+      // short-lived Effect.forkScoped fiber that completes the instant this
+      // function returns. Effect.forkChild ties the forked fiber's lifetime
+      // to that parent fiber, so `work` would be interrupted before it ever
+      // reaches the HTTP call. Effect.forkDetach attaches it to the global
+      // scope instead, so it survives past sendTurn's own return.
+      yield* Effect.forkDetach(work);
 
       return { threadId: turnInput.threadId, turnId };
     });
