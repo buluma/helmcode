@@ -353,3 +353,37 @@ it.effect("rollbackThread removes the trailing turn's messages", () =>
     assert.equal(readAfter.turns.length, 0);
   }),
 );
+
+it.effect(
+  "completes the turn even after the fiber that called sendTurn has finished (regression: forkChild vs forkDetach)",
+  () =>
+    Effect.gen(function* () {
+      // Mirrors ProviderCommandReactor.ts, which runs `sendTurn` inside a
+      // short-lived `Effect.forkScoped` fiber that completes the instant
+      // `sendTurn` returns. `Effect.forkChild` ties its forked fiber's
+      // lifetime to that parent, so the background HTTP call would be
+      // interrupted before it ever ran -- session.started fires, then
+      // nothing else, forever. `Effect.forkDetach` fixes it.
+      const threadId = ThreadId.make("nvidia-detached-turn");
+      const adapter = yield* makeTestAdapter().pipe(
+        Effect.provide(testLayer(() => ({ body: chatCompletion("survived the parent fiber") }))),
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("nvidia"),
+        runtimeMode: "full-access",
+      });
+
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "turn.completed" ? Deferred.succeed(turnCompleted, undefined) : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      const callerFiber = yield* adapter.sendTurn({ threadId, input: "hi" }).pipe(Effect.forkChild);
+      yield* Fiber.join(callerFiber);
+
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+    }),
+);
