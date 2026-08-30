@@ -237,7 +237,11 @@ interface OpenCodeSessionContext {
    * numbers.
    */
   lastAssistantUsage:
-    | { totalCostUsd: number; tokenUsage: ThreadTokenUsageSnapshot; stopReason: string | undefined }
+    | {
+        totalCostUsd: number | undefined;
+        tokenUsage: ThreadTokenUsageSnapshot | undefined;
+        stopReason: string | undefined;
+      }
     | undefined;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
@@ -890,13 +894,23 @@ export function makeOpenCodeAdapter(
             }
 
             const tokenUsage = openCodeTokenUsageSnapshot(event.properties.info);
-            if (tokenUsage) {
+            const totalCostUsd =
+              typeof event.properties.info.cost === "number"
+                ? event.properties.info.cost
+                : undefined;
+            const stopReason = event.properties.info.finish;
+            if (
+              tokenUsage !== undefined ||
+              totalCostUsd !== undefined ||
+              stopReason !== undefined
+            ) {
               context.lastAssistantUsage = {
-                totalCostUsd:
-                  typeof event.properties.info.cost === "number" ? event.properties.info.cost : 0,
-                tokenUsage,
-                stopReason: event.properties.info.finish,
+                totalCostUsd: totalCostUsd ?? context.lastAssistantUsage?.totalCostUsd,
+                tokenUsage: tokenUsage ?? context.lastAssistantUsage?.tokenUsage,
+                stopReason: stopReason ?? context.lastAssistantUsage?.stopReason,
               };
+            }
+            if (tokenUsage) {
               yield* emit({
                 ...(yield* buildEventBase({
                   threadId: context.session.threadId,
@@ -1146,7 +1160,7 @@ export function makeOpenCodeAdapter(
                 ...(context.lastAssistantUsage?.stopReason !== undefined
                   ? { stopReason: context.lastAssistantUsage.stopReason }
                   : {}),
-                ...(context.lastAssistantUsage !== undefined
+                ...(context.lastAssistantUsage?.totalCostUsd !== undefined
                   ? { totalCostUsd: context.lastAssistantUsage.totalCostUsd }
                   : {}),
               },
@@ -1178,7 +1192,10 @@ export function makeOpenCodeAdapter(
               payload: {
                 state: "failed",
                 errorMessage: message,
-                ...(context.lastAssistantUsage !== undefined
+                ...(context.lastAssistantUsage?.stopReason !== undefined
+                  ? { stopReason: context.lastAssistantUsage.stopReason }
+                  : {}),
+                ...(context.lastAssistantUsage?.totalCostUsd !== undefined
                   ? { totalCostUsd: context.lastAssistantUsage.totalCostUsd }
                   : {}),
               },
