@@ -10,6 +10,7 @@ import { NvidiaSettings, ProviderDriverKind, type ServerProvider } from "@helmco
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
@@ -41,6 +42,7 @@ const DRIVER_KIND = ProviderDriverKind.make("nvidia");
 export type NvidiaDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | Crypto.Crypto
+  | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderEventLoggers
   | ServerConfig

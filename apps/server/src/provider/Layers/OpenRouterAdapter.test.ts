@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -23,11 +24,31 @@ import { makeOpenRouterAdapter } from "./OpenRouterAdapter.ts";
 type CapturedRequest = {
   readonly authorization: string | undefined;
   readonly contentType: string | undefined;
-  readonly body: { readonly model: string; readonly messages: ReadonlyArray<unknown> };
+  readonly body: {
+    readonly model: string;
+    readonly messages: ReadonlyArray<unknown>;
+    readonly tools?: unknown;
+  };
 };
 
 const chatCompletion = (content: string) => ({
   choices: [{ message: { role: "assistant", content } }],
+});
+
+const toolCallCompletion = (calls: ReadonlyArray<{ id: string; name: string; args: unknown }>) => ({
+  choices: [
+    {
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: calls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: JSON.stringify(call.args) },
+        })),
+      },
+    },
+  ],
 });
 
 const decodeJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -411,4 +432,186 @@ it.effect(
       yield* Deferred.await(turnCompleted);
       yield* Fiber.interrupt(eventsFiber);
     }),
+);
+
+it.effect("runs a workspace tool call before answering when a cwd is set", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+    yield* fs.writeFileString(`${cwd}/notes.txt`, "hello from disk");
+
+    const threadId = ThreadId.make("openrouter-tool-call");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  { id: "call_1", name: "read_file", args: { path: "notes.txt" } },
+                ]),
+              }
+            : { body: chatCompletion("The file says: hello from disk") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "what does notes.txt say?" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(requests.length, 2);
+    // First round offered the tools; the second round included the tool
+    // result as a "tool" message so the model could use it.
+    assert.isDefined(requests[0]!.body.tools);
+    const secondRoundMessages = requests[1]!.body.messages as Array<Record<string, unknown>>;
+    const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
+    assert.isDefined(toolResultMessage);
+    assert.equal(toolResultMessage?.content, "hello from disk");
+
+    const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+    const toolCompleted = runtimeEvents.find(
+      (event) => event.type === "item.completed" && event.payload.itemType === "dynamic_tool_call",
+    );
+    assert.isDefined(toolStarted);
+    assert.isDefined(toolCompleted);
+    if (toolCompleted?.type === "item.completed") {
+      assert.equal(toolCompleted.payload.title, "read_file");
+      assert.equal(toolCompleted.payload.detail, "hello from disk");
+    }
+
+    const finalContent = runtimeEvents.find((event) => event.type === "content.delta");
+    if (finalContent?.type === "content.delta") {
+      assert.equal(finalContent.payload.delta, "The file says: hello from disk");
+    } else {
+      assert.fail("expected a content.delta event");
+    }
+
+    const thread = yield* adapter.readThread(threadId);
+    assert.equal(thread.turns.length, 1);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects a read_file path that escapes the project root", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("openrouter-tool-path-escape");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  { id: "call_1", name: "read_file", args: { path: "../../etc/passwd" } },
+                ]),
+              }
+            : { body: chatCompletion("I can't read outside the project.") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      event.type === "turn.completed" ? Deferred.succeed(turnCompleted, undefined) : Effect.void,
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "read /etc/passwd" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(requests.length, 2);
+    const secondRoundMessages = requests[1]!.body.messages as Array<Record<string, unknown>>;
+    const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
+    assert.isDefined(toolResultMessage);
+    assert.include(toolResultMessage?.content as string, "outside the project root");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("falls back to no tools when the model rejects the tools field", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("openrouter-tools-unsupported");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return captured.body.tools
+            ? { status: 400, body: { error: "tools is not supported for this model" } }
+            : { body: chatCompletion("plain answer, no tools") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(requests.length, 2);
+    assert.isDefined(requests[0]!.body.tools);
+    assert.isUndefined(requests[1]!.body.tools);
+
+    const finalContent = runtimeEvents.find((event) => event.type === "content.delta");
+    if (finalContent?.type === "content.delta") {
+      assert.equal(finalContent.payload.delta, "plain answer, no tools");
+    } else {
+      assert.fail("expected a content.delta event");
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
