@@ -241,13 +241,18 @@ const NVIDIA_WORKSPACE_TOOLS = [
 ] as const;
 
 /**
- * Resolves a model-supplied relative path against `cwd`, rejecting anything
- * that escapes it. Two layers: a lexical normalize-then-startsWith check
- * (mirrors resolveAttachmentRelativePath in attachmentPaths.ts) rejects `..`
- * traversal and absolute paths outright, then an fs.realPath containment
- * check on whatever survives catches a symlink that resolves outside `cwd`
- * without ever appearing to escape it lexically. Missing paths (ENOENT) are
- * not an escape -- callers surface those as their own tool-result error.
+ * Resolves a model-supplied path against `cwd`, rejecting anything that
+ * escapes it. Accepts an absolute path too -- models routinely echo back the
+ * cwd they were told about instead of a relative path, and treating that as
+ * relative-to-root (the old behavior) re-rooted it into nonsense like
+ * `<root>/Users/you/project`. An absolute path is resolved as-is and still
+ * has to land inside `cwd`; it isn't exempt from either containment check
+ * below. Two layers: a lexical normalize-then-startsWith check (mirrors
+ * resolveAttachmentRelativePath in attachmentPaths.ts) rejects `..` traversal
+ * outright, then an fs.realPath containment check on whatever survives
+ * catches a symlink that resolves outside `cwd` without ever appearing to
+ * escape it lexically. Missing paths (ENOENT) are not an escape -- callers
+ * surface those as their own tool-result error.
  */
 const resolveWorkspacePath = (
   fs: FileSystem.FileSystem,
@@ -258,9 +263,10 @@ const resolveWorkspacePath = (
     if (relativePath.includes("\0")) {
       return null;
     }
-    const normalized = NodePath.normalize(relativePath || ".").replace(/^[/\\]+/, "");
     const root = NodePath.resolve(cwd);
-    const lexicallyResolved = NodePath.resolve(NodePath.join(root, normalized));
+    const lexicallyResolved = NodePath.isAbsolute(relativePath)
+      ? NodePath.resolve(relativePath)
+      : NodePath.resolve(NodePath.join(root, NodePath.normalize(relativePath || ".")));
     if (lexicallyResolved !== root && !lexicallyResolved.startsWith(`${root}${NodePath.sep}`)) {
       return null;
     }
@@ -565,20 +571,37 @@ interface WorkspaceCommandResult {
 }
 
 /**
- * Runs `command` through the platform shell in `cwd`. Deliberately not
- * routed through this codebase's ProcessRunner service -- that would widen
- * every driver/test wiring for these two adapters just to reach it, for a
- * capability (arbitrary shell exec) that's already gated behind an approval
- * decision before this ever runs. Output is capped and the process is
- * killed on timeout so one runaway command can't hang or flood a turn.
+ * Lists `pid`'s direct children via `pgrep -P`, recursively, to build the
+ * full descendant set. `pgrep` exits 1 (not an error, just "no children")
+ * when a process has none.
  */
+function collectDescendantPids(pid: number): ReadonlyArray<number> {
+  try {
+    const output = NodeChildProcess.execFileSync("pgrep", ["-P", String(pid)], {
+      encoding: "utf8",
+    });
+    const children = output
+      .split("\n")
+      .map((line) => Number(line.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    return children.flatMap((child) => [child, ...collectDescendantPids(child)]);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Kills `pid` and everything it spawned, not just the shell itself -- a
  * plain `child.kill()` only signals the shell process, so a command like
  * `sleep 30 &` leaves its background descendant running past timeout or
- * interruption. POSIX: the shell is spawned detached so it leads its own
- * process group, and a negative pid signals the whole group. Windows has no
- * process-group concept here, so `taskkill /T` walks the process tree.
+ * interruption. Windows: `taskkill /T` walks the process tree directly.
+ * POSIX: deliberately NOT `spawn(..., { detached: true })` + a process-group
+ * kill -- `detached` makes the shell its own session leader (setsid), and on
+ * macOS that breaks the TCC/file-access grant the spawned shell would
+ * otherwise inherit from this app, turning every workspace-relative command
+ * into "Operation not permitted" (observed in production). `pgrep`-based
+ * descendant discovery gets the same result without touching the process's
+ * session.
  */
 function killProcessTree(pid: number, isWindows: boolean): void {
   if (isWindows) {
@@ -588,14 +611,24 @@ function killProcessTree(pid: number, isWindows: boolean): void {
     });
     return;
   }
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    // The group leader may already be gone (e.g. it exited on its own
-    // between the close/error event and this cleanup running).
+  for (const target of [pid, ...collectDescendantPids(pid)]) {
+    try {
+      process.kill(target, "SIGKILL");
+    } catch {
+      // Already gone (e.g. exited on its own between the close/error event
+      // and this cleanup running).
+    }
   }
 }
 
+/**
+ * Runs `command` through the platform shell in `cwd`. Deliberately not
+ * routed through this codebase's ProcessRunner service -- that would widen
+ * every driver/test wiring for these two adapters just to reach it, for a
+ * capability (arbitrary shell exec) that's already gated behind an approval
+ * decision before this ever runs. Output is capped and the process is
+ * killed on timeout so one runaway command can't hang or flood a turn.
+ */
 const runShellCommand = (
   cwd: string,
   command: string,
@@ -605,7 +638,7 @@ const runShellCommand = (
     const child = NodeChildProcess.spawn(
       isWindows ? "cmd.exe" : "/bin/sh",
       isWindows ? ["/d", "/s", "/c", command] : ["-c", command],
-      { cwd, windowsHide: true, detached: !isWindows },
+      { cwd, windowsHide: true },
     );
 
     let stdout = "";
@@ -724,7 +757,10 @@ const runWorkspaceTool = (
  * (observed: "Missing request extension ... axum::Extension") and clears up
  * seconds later -- distinct from this file's own class of the same name
  * duplicated in OpenRouterAdapter.ts. Marks a response as worth retrying;
- * never thrown for 4xx (bad key/model/quota), which are not transient.
+ * never thrown for 4xx (bad key/model/quota), which are not transient,
+ * except 429 -- a rate limit clears up on its own the same way a 5xx does,
+ * and failing the whole session on the first 429 (as observed in production
+ * logs) needlessly kills a turn that would have gone through moments later.
  */
 class NvidiaTransientHttpError extends Schema.TaggedErrorClass<NvidiaTransientHttpError>()(
   "NvidiaTransientHttpError",
@@ -931,7 +967,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
           ),
         );
         const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
-        if (response.status >= 500) {
+        if (response.status >= 500 || response.status === 429) {
           return yield* new NvidiaTransientHttpError({ status: response.status, detail });
         }
         // Not every model behind NVIDIA NIM supports function calling, and
