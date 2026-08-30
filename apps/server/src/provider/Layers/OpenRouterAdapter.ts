@@ -532,6 +532,20 @@ const writeWorkspaceFileTool = (
       return `Error: path '${rawPath}' is outside the project root.`;
     }
     yield* fs.makeDirectory(NodePath.dirname(resolved), { recursive: true }).pipe(Effect.result);
+    // resolveWorkspacePath can't realpath-check a target that doesn't exist
+    // yet, so a symlinked directory inside the workspace would otherwise let
+    // this write land anywhere on disk. Re-check the now-existing parent.
+    const root = NodePath.resolve(cwd);
+    const realRoot = yield* fs.realPath(root).pipe(Effect.result);
+    const realParent = yield* fs.realPath(NodePath.dirname(resolved)).pipe(Effect.result);
+    if (
+      realRoot._tag === "Failure" ||
+      realParent._tag === "Failure" ||
+      (realParent.success !== realRoot.success &&
+        !realParent.success.startsWith(`${realRoot.success}${NodePath.sep}`))
+    ) {
+      return `Error: path '${rawPath}' is outside the project root.`;
+    }
     const written = yield* fs.writeFileString(resolved, content).pipe(Effect.result);
     if (written._tag === "Failure") {
       return `Error: could not write '${rawPath}': ${written.failure.message}`;
@@ -632,10 +646,10 @@ const runWorkspaceCommandTool = (
  * search_text) aren't in this map -- they never need approval, in
  * "full-access" or otherwise, same as every other adapter in this codebase.
  */
-const WORKSPACE_APPROVAL_REQUIRED_TOOLS: Record<string, CanonicalRequestType> = {
-  write_file: "file_change_approval",
-  run_command: "command_execution_approval",
-};
+const WORKSPACE_APPROVAL_REQUIRED_TOOLS = new Map<string, CanonicalRequestType>([
+  ["write_file", "file_change_approval"],
+  ["run_command", "command_execution_approval"],
+]);
 
 /**
  * Dispatches one model tool call to its implementation. Never fails: a
@@ -1085,7 +1099,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
             },
           });
 
-          const approvalRequestType = WORKSPACE_APPROVAL_REQUIRED_TOOLS[toolCall.function.name];
+          const approvalRequestType = WORKSPACE_APPROVAL_REQUIRED_TOOLS.get(toolCall.function.name);
           const decision = approvalRequestType
             ? yield* requestApprovalIfNeeded({
                 session: loopInput.session,
@@ -1292,13 +1306,15 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
     });
 
   const respondToRequest: OpenRouterAdapterShape["respondToRequest"] = (
-    _threadId,
+    threadId,
     requestId,
     decision,
   ) =>
     Effect.gen(function* () {
       const pending = pendingApprovals.get(requestId);
-      if (!pending) {
+      // A requestId is a correlation ID, not proof of ownership -- also
+      // require it belongs to the thread the caller claims it's for.
+      if (!pending || pending.threadId !== threadId) {
         return yield* new ProviderAdapterValidationError({
           provider: OPENROUTER,
           operation: "respondToRequest",
