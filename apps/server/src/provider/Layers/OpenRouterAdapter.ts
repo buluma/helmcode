@@ -6,11 +6,18 @@ import type {
 import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 
 // @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalTimers:off
+// @effect-diagnostics globalTimersInEffect:off
+// runShellCommand below manages a raw Node child_process's lifecycle
+// (stdout/stderr listeners, a kill-on-timeout) outside of any Effect fiber,
+// so there's no fiber-scoped Effect.sleep to use in its place.
+import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
@@ -20,12 +27,18 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
+  ApprovalRequestId,
+  type CanonicalRequestType,
   EventId,
+  type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderRuntimeEvent,
+  type RuntimeMode,
+  RuntimeRequestId,
   ThreadId,
   TurnId,
 } from "@helmcode/contracts";
+import { isHostWindows } from "@helmcode/shared/hostProcess";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
@@ -90,6 +103,7 @@ type ChatMessage =
 
 interface Session {
   readonly cwd: string | undefined;
+  readonly runtimeMode: RuntimeMode;
   readonly messages: Array<ChatMessage>;
   /**
    * Raw-message count appended per turn, in order, so readThread/rollbackThread
@@ -97,22 +111,38 @@ interface Session {
    * fixed 2 messages (user + assistant) a plain text turn does.
    */
   readonly turnMessageCounts: Array<number>;
+  /**
+   * Request types the user granted "acceptForSession" for -- once a decision
+   * comes back with that verdict, every later request of the same type in
+   * this session auto-accepts instead of asking again.
+   */
+  readonly autoAcceptedRequestTypes: Set<CanonicalRequestType>;
 }
 
 const sessions = new Map<ThreadId, Session>();
 
-// This adapter's tool set is deliberately read-only: no writes, no shell
-// exec, no approval flow. respondToRequest/respondToUserInput below stay
-// unsupported -- there's nothing here that needs a human decision.
+interface PendingApproval {
+  readonly threadId: ThreadId;
+  readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+}
+
+const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+
+// write_file and run_command are gated by requestApprovalIfNeeded below,
+// same shape as ClaudeAdapter's canUseTool: allowed outright in full-access
+// sessions, file changes auto-allowed in auto-accept-edits, everything else
+// asks via request.opened/request.resolved and respondToRequest.
+// respondToUserInput (structured question-answering) has no equivalent
+// here and stays unsupported.
 const WORKSPACE_TOOL_MAX_FILE_BYTES = 256 * 1024;
 const WORKSPACE_TOOL_MAX_ENTRIES = 500;
+const WORKSPACE_TOOL_MAX_MATCHES = 200;
 // Bounds the directory walk itself (files + directories visited), separate
 // from WORKSPACE_TOOL_MAX_ENTRIES/MAX_MATCHES, which only cap what gets
 // returned after the walk. Without this, listing or searching a huge tree
 // (or one where an excluded directory wasn't actually excluded) did
 // unbounded work before ever applying those caps.
 const WORKSPACE_TOOL_MAX_SCAN_ENTRIES = 2000;
-const WORKSPACE_TOOL_MAX_MATCHES = 200;
 const WORKSPACE_TOOL_EXCLUDED_DIR_NAMES = new Set([
   "node_modules",
   ".git",
@@ -174,6 +204,37 @@ const OPENROUTER_WORKSPACE_TOOLS = [
           },
         },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_file",
+      description:
+        "Create or overwrite a text file, given a path relative to the project root. Requires the user's approval unless the session has full access or has already accepted file changes.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Path relative to the project root." },
+          content: { type: "string", description: "Full contents to write to the file." },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_command",
+      description:
+        "Run a shell command in the project root and return its stdout/stderr/exit code. Requires the user's approval unless the session has full access or has already accepted command execution.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Shell command to run." },
+        },
+        required: ["command"],
       },
     },
   },
@@ -453,6 +514,177 @@ const searchWorkspaceTextTool = (
       : `${matches.join("\n")}${scanNote}`;
   });
 
+const writeWorkspaceFileTool = (
+  fs: FileSystem.FileSystem,
+  cwd: string,
+  args: { readonly path?: unknown; readonly content?: unknown },
+): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const rawPath = typeof args.path === "string" ? args.path : undefined;
+    const content = typeof args.content === "string" ? args.content : undefined;
+    if (!rawPath) {
+      return "Error: 'path' is required.";
+    }
+    if (content === undefined) {
+      return "Error: 'content' is required.";
+    }
+    const resolved = yield* resolveWorkspacePath(fs, cwd, rawPath);
+    if (!resolved) {
+      return `Error: path '${rawPath}' is outside the project root.`;
+    }
+    yield* fs.makeDirectory(NodePath.dirname(resolved), { recursive: true }).pipe(Effect.result);
+    // resolveWorkspacePath can't realpath-check a target that doesn't exist
+    // yet, so a symlinked directory inside the workspace would otherwise let
+    // this write land anywhere on disk. Re-check the now-existing parent.
+    const root = NodePath.resolve(cwd);
+    const realRoot = yield* fs.realPath(root).pipe(Effect.result);
+    const realParent = yield* fs.realPath(NodePath.dirname(resolved)).pipe(Effect.result);
+    if (
+      realRoot._tag === "Failure" ||
+      realParent._tag === "Failure" ||
+      (realParent.success !== realRoot.success &&
+        !realParent.success.startsWith(`${realRoot.success}${NodePath.sep}`))
+    ) {
+      return `Error: path '${rawPath}' is outside the project root.`;
+    }
+    const written = yield* fs.writeFileString(resolved, content).pipe(Effect.result);
+    if (written._tag === "Failure") {
+      return `Error: could not write '${rawPath}': ${written.failure.message}`;
+    }
+    return `Wrote ${Buffer.byteLength(content, "utf8")} bytes to '${rawPath}'.`;
+  });
+
+const WORKSPACE_COMMAND_TIMEOUT_MS = 60_000;
+const WORKSPACE_COMMAND_MAX_OUTPUT_BYTES = 256 * 1024;
+
+interface WorkspaceCommandResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly code: number | null;
+  readonly timedOut: boolean;
+}
+
+/**
+ * Runs `command` through the platform shell in `cwd`. Deliberately not
+ * routed through this codebase's ProcessRunner service -- that would widen
+ * every driver/test wiring for these two adapters just to reach it, for a
+ * capability (arbitrary shell exec) that's already gated behind an approval
+ * decision before this ever runs. Output is capped and the process is
+ * killed on timeout so one runaway command can't hang or flood a turn.
+ */
+/**
+ * Kills `pid` and everything it spawned, not just the shell itself -- a
+ * plain `child.kill()` only signals the shell process, so a command like
+ * `sleep 30 &` leaves its background descendant running past timeout or
+ * interruption. POSIX: the shell is spawned detached so it leads its own
+ * process group, and a negative pid signals the whole group. Windows has no
+ * process-group concept here, so `taskkill /T` walks the process tree.
+ */
+function killProcessTree(pid: number, isWindows: boolean): void {
+  if (isWindows) {
+    NodeChildProcess.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // The group leader may already be gone (e.g. it exited on its own
+    // between the close/error event and this cleanup running).
+  }
+}
+
+const runShellCommand = (
+  cwd: string,
+  command: string,
+  isWindows: boolean,
+): Effect.Effect<WorkspaceCommandResult> =>
+  Effect.callback<WorkspaceCommandResult>((resume) => {
+    const child = NodeChildProcess.spawn(
+      isWindows ? "cmd.exe" : "/bin/sh",
+      isWindows ? ["/d", "/s", "/c", command] : ["-c", command],
+      { cwd, windowsHide: true, detached: !isWindows },
+    );
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const killTree = (): void => {
+      if (typeof child.pid === "number") {
+        killProcessTree(child.pid, isWindows);
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree();
+    }, WORKSPACE_COMMAND_TIMEOUT_MS);
+
+    const append = (current: string, chunk: Buffer): string =>
+      current.length >= WORKSPACE_COMMAND_MAX_OUTPUT_BYTES
+        ? current
+        : current + chunk.toString("utf8");
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout = append(stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = append(stderr, chunk);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resume(
+        Effect.succeed({ stdout, stderr: `${stderr}\n${error.message}`, code: null, timedOut }),
+      );
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resume(Effect.succeed({ stdout, stderr, code, timedOut }));
+    });
+
+    return Effect.sync(() => {
+      clearTimeout(timer);
+      killTree();
+    });
+  });
+
+const runWorkspaceCommandTool = (
+  cwd: string,
+  args: { readonly command?: unknown },
+): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const command = typeof args.command === "string" ? args.command.trim() : undefined;
+    if (!command) {
+      return "Error: 'command' is required.";
+    }
+
+    const isWindows = yield* isHostWindows;
+    const result = yield* runShellCommand(cwd, command, isWindows);
+    const cap = (text: string): string =>
+      text.length > WORKSPACE_COMMAND_MAX_OUTPUT_BYTES
+        ? `${text.slice(0, WORKSPACE_COMMAND_MAX_OUTPUT_BYTES)}\n... (truncated)`
+        : text;
+    const stdout = cap(result.stdout);
+    const stderr = cap(result.stderr);
+
+    if (result.timedOut) {
+      return `Error: command timed out after ${WORKSPACE_COMMAND_TIMEOUT_MS}ms.\nstdout:\n${stdout || "(empty)"}\nstderr:\n${stderr || "(empty)"}`;
+    }
+    return `exit code: ${result.code ?? "unknown"}\nstdout:\n${stdout || "(empty)"}\nstderr:\n${stderr || "(empty)"}`;
+  });
+
+/**
+ * Tools that mutate the workspace or run arbitrary commands, mapped to the
+ * canonical approval type they require. Reads (read_file, list_directory,
+ * search_text) aren't in this map -- they never need approval, in
+ * "full-access" or otherwise, same as every other adapter in this codebase.
+ */
+const WORKSPACE_APPROVAL_REQUIRED_TOOLS = new Map<string, CanonicalRequestType>([
+  ["write_file", "file_change_approval"],
+  ["run_command", "command_execution_approval"],
+]);
+
 /**
  * Dispatches one model tool call to its implementation. Never fails: a
  * malformed arguments payload or an unknown tool name becomes an error
@@ -478,6 +710,10 @@ const runWorkspaceTool = (
         return yield* listWorkspaceDirectoryTool(fs, cwd, args);
       case "search_text":
         return yield* searchWorkspaceTextTool(fs, cwd, args);
+      case "write_file":
+        return yield* writeWorkspaceFileTool(fs, cwd, args);
+      case "run_command":
+        return yield* runWorkspaceCommandTool(cwd, args);
       default:
         return `Error: unknown tool '${toolCall.function.name}'.`;
     }
@@ -530,15 +766,16 @@ const OPENROUTER_HTTP_RETRY_SCHEDULE = Schedule.exponential("500 millis").pipe(
   Schedule.upTo({ times: 3 }),
 );
 
-// This adapter has read-only workspace tools (read_file, list_directory,
-// search_text) but no shell exec and no write access, so the model still
-// needs to be told the shape of its access rather than assume parity with a
-// full coding agent.
+// This adapter has the same tool set as Claude/Codex -- read/list/search,
+// write, and run_command -- but write_file and run_command need the user's
+// approval unless the session is full-access or already accepted that
+// request type. The model should attempt them anyway; a decline comes back
+// as a tool result it can react to, same as any other tool error.
 function systemMessageFor(cwd: string | undefined): { role: "system"; content: string } {
   return {
     role: "system",
     content: cwd
-      ? `You are assisting with the project checked out at ${cwd}. You have read-only tools to read files, list directories, and search text under this path -- you cannot write files or run shell commands. Use the tools before answering questions about the code.`
+      ? `You are assisting with the project checked out at ${cwd}. You have tools to read files, list directories, search text, write files, and run shell commands under this path. Writing files and running commands may require the user's approval first. Use the tools before answering questions about the code.`
       : "You have no file, shell, or tool access -- you cannot read or list any codebase. If the user asks about code, ask them to paste it.",
   };
 }
@@ -570,7 +807,69 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
   );
   const nextEventId = Effect.map(randomUUIDv4, EventId.make);
   const nextTurnId = Effect.map(randomUUIDv4, TurnId.make);
+  const nextRequestId = Effect.map(randomUUIDv4, ApprovalRequestId.make);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+  /**
+   * Gates a write_file/run_command tool call behind the session's runtime
+   * mode, mirroring ClaudeAdapter's canUseTool: "full-access" auto-allows
+   * everything, "auto-accept-edits" auto-allows file changes but still asks
+   * for commands, and every other mode asks for both -- unless the user
+   * already granted "acceptForSession" for this request type earlier in the
+   * session, in which case it's remembered and skipped.
+   */
+  const requestApprovalIfNeeded = (approvalInput: {
+    readonly session: Session;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly requestType: CanonicalRequestType;
+    readonly detail: string;
+  }): Effect.Effect<ProviderApprovalDecision, ProviderAdapterRequestError> =>
+    Effect.gen(function* () {
+      if (
+        approvalInput.session.runtimeMode === "full-access" ||
+        (approvalInput.session.runtimeMode === "auto-accept-edits" &&
+          approvalInput.requestType === "file_change_approval") ||
+        approvalInput.session.autoAcceptedRequestTypes.has(approvalInput.requestType)
+      ) {
+        return "accept" as const;
+      }
+
+      const requestId = yield* nextRequestId;
+      const decision = yield* Deferred.make<ProviderApprovalDecision>();
+      pendingApprovals.set(requestId, { threadId: approvalInput.threadId, decision });
+
+      yield* publish({
+        eventId: yield* nextEventId,
+        provider: OPENROUTER,
+        threadId: approvalInput.threadId,
+        turnId: approvalInput.turnId,
+        requestId: RuntimeRequestId.make(requestId),
+        createdAt: yield* nowIso,
+        type: "request.opened",
+        payload: { requestType: approvalInput.requestType, detail: approvalInput.detail },
+      });
+
+      const resolved = yield* Deferred.await(decision);
+      pendingApprovals.delete(requestId);
+
+      if (resolved === "acceptForSession") {
+        approvalInput.session.autoAcceptedRequestTypes.add(approvalInput.requestType);
+      }
+
+      yield* publish({
+        eventId: yield* nextEventId,
+        provider: OPENROUTER,
+        threadId: approvalInput.threadId,
+        turnId: approvalInput.turnId,
+        requestId: RuntimeRequestId.make(requestId),
+        createdAt: yield* nowIso,
+        type: "request.resolved",
+        payload: { requestType: approvalInput.requestType, decision: resolved },
+      });
+
+      return resolved;
+    });
 
   const attemptChatCompletions = (payload: {
     readonly messages: ReadonlyArray<ChatMessage>;
@@ -743,8 +1042,10 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
     Effect.gen(function* () {
       sessions.set(sessionInput.threadId, {
         cwd: sessionInput.cwd,
+        runtimeMode: sessionInput.runtimeMode,
         messages: [],
         turnMessageCounts: [],
+        autoAcceptedRequestTypes: new Set(),
       });
 
       yield* publish({
@@ -782,7 +1083,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
    * there's nothing to sandbox them to.
    */
   const runToolLoop = (loopInput: {
-    readonly cwd: string | undefined;
+    readonly session: Session;
     readonly model: string;
     readonly history: ReadonlyArray<ChatMessage>;
     readonly userMessage: ChatMessage;
@@ -794,7 +1095,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
   > =>
     Effect.gen(function* () {
       const appended: Array<ChatMessage> = [loopInput.userMessage];
-      const cwd = loopInput.cwd;
+      const cwd = loopInput.session.cwd;
 
       for (let round = 0; round < OPENROUTER_TOOL_LOOP_MAX_ROUNDS; round++) {
         const result = yield* callChatCompletions({
@@ -832,9 +1133,25 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
             },
           });
 
+          const approvalRequestType = WORKSPACE_APPROVAL_REQUIRED_TOOLS.get(toolCall.function.name);
+          const decision = approvalRequestType
+            ? yield* requestApprovalIfNeeded({
+                session: loopInput.session,
+                threadId: loopInput.threadId,
+                turnId: loopInput.turnId,
+                requestType: approvalRequestType,
+                detail: argsSummary,
+              })
+            : "accept";
+
           // cwd is defined whenever tools were offered (the only way a
           // tool_call can exist), so this is never called without one.
-          const toolResult = yield* runWorkspaceTool(fs, cwd!, toolCall);
+          const toolResult =
+            decision === "accept" || decision === "acceptForSession"
+              ? yield* runWorkspaceTool(fs, cwd!, toolCall)
+              : decision === "cancel"
+                ? "The user cancelled this action."
+                : "The user declined this action.";
 
           yield* publish({
             eventId: yield* nextEventId,
@@ -845,7 +1162,8 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
             type: "item.completed",
             payload: {
               itemType: "dynamic_tool_call",
-              status: "completed",
+              status:
+                decision === "accept" || decision === "acceptForSession" ? "completed" : "declined",
               title: toolCall.function.name,
               detail: toolResult.trim().length > 0 ? toolResult.trim().slice(0, 2000) : "(empty)",
             },
@@ -901,7 +1219,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         const userMessage: ChatMessage = { role: "user", content: turnInput.input ?? "" };
 
         const { appendedMessages, finalText } = yield* runToolLoop({
-          cwd: session.cwd,
+          session,
           model: turnInput.modelSelection?.model ?? input.defaultModel,
           history: session.messages,
           userMessage,
@@ -911,8 +1229,13 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
 
         sessions.set(turnInput.threadId, {
           cwd: session.cwd,
+          runtimeMode: session.runtimeMode,
           messages: [...session.messages, ...appendedMessages],
           turnMessageCounts: [...session.turnMessageCounts, appendedMessages.length],
+          // Same Set reference as `session` -- requestApprovalIfNeeded may
+          // have mutated it in place while the loop ran, and that has to
+          // survive into the session record replacing `session` here.
+          autoAcceptedRequestTypes: session.autoAcceptedRequestTypes,
         });
 
         yield* publish({
@@ -991,26 +1314,50 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       return { threadId: turnInput.threadId, turnId };
     });
 
+  /**
+   * Resolves ("cancel") every pending approval opened for `threadId`, so an
+   * interrupted or stopped turn's requestApprovalIfNeeded doesn't hang
+   * forever awaiting a decision nothing will ever send.
+   */
+  const cancelPendingApprovalsForThread = (threadId: ThreadId): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      for (const [requestId, pending] of pendingApprovals) {
+        if (pending.threadId !== threadId) {
+          continue;
+        }
+        pendingApprovals.delete(requestId);
+        yield* Deferred.succeed(pending.decision, "cancel");
+      }
+    });
+
   const interruptTurn: OpenRouterAdapterShape["interruptTurn"] = (
     _threadId: ThreadId,
     _turnId?: TurnId,
   ) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       sessions.delete(_threadId);
+      yield* cancelPendingApprovalsForThread(_threadId);
     });
 
   const respondToRequest: OpenRouterAdapterShape["respondToRequest"] = (
-    _threadId: ThreadId,
-    _requestId: string,
-    _decision: string,
+    threadId,
+    requestId,
+    decision,
   ) =>
-    Effect.fail(
-      new ProviderAdapterValidationError({
-        provider: OPENROUTER,
-        operation: "respondToRequest",
-        issue: "Interactive approval requests are not supported by this adapter.",
-      }),
-    );
+    Effect.gen(function* () {
+      const pending = pendingApprovals.get(requestId);
+      // A requestId is a correlation ID, not proof of ownership -- also
+      // require it belongs to the thread the caller claims it's for.
+      if (!pending || pending.threadId !== threadId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: OPENROUTER,
+          operation: "respondToRequest",
+          issue: `No pending approval request '${requestId}' for this session.`,
+        });
+      }
+      pendingApprovals.delete(requestId);
+      yield* Deferred.succeed(pending.decision, decision);
+    });
 
   const respondToUserInput: OpenRouterAdapterShape["respondToUserInput"] = (
     _threadId: ThreadId,
@@ -1026,8 +1373,9 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
     );
 
   const stopSession: OpenRouterAdapterShape["stopSession"] = (threadId: ThreadId) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       sessions.delete(threadId);
+      yield* cancelPendingApprovalsForThread(threadId);
     });
 
   const listSessions: OpenRouterAdapterShape["listSessions"] = () =>
@@ -1095,15 +1443,21 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
 
       sessions.set(threadId, {
         cwd: session.cwd,
+        runtimeMode: session.runtimeMode,
         messages: session.messages.slice(0, keptMessageCount),
         turnMessageCounts: keptTurnCounts,
+        autoAcceptedRequestTypes: session.autoAcceptedRequestTypes,
       });
       return { threadId, turns: [] } as ProviderThreadSnapshot;
     });
 
   const stopAll: OpenRouterAdapterShape["stopAll"] = () =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       sessions.clear();
+      for (const [requestId, pending] of pendingApprovals) {
+        pendingApprovals.delete(requestId);
+        yield* Deferred.succeed(pending.decision, "cancel");
+      }
     });
 
   return {
