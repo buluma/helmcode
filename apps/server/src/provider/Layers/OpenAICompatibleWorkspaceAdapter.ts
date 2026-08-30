@@ -837,7 +837,7 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
   // to bound cost/latency against a model that keeps calling tools instead
   // of answering. The caller's own attempt is round 1; there's no vendor
   // doc recommendation for this number, so it's a starting guess.
-  const TOOL_LOOP_MAX_ROUNDS = 8;
+  const TOOL_LOOP_MAX_ROUNDS = 25;
 
   return Effect.fn(`make${LABEL.replace(/[^a-zA-Z0-9]/g, "")}Adapter`)(function* (input: {
     readonly apiKey: string;
