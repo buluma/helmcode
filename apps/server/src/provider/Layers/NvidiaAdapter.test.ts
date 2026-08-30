@@ -241,6 +241,54 @@ it.effect("publishes session.exited when NVIDIA responds with a non-200 status",
   }),
 );
 
+it.effect("retries a 429 and succeeds once NVIDIA stops rate-limiting", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("nvidia-rate-limited");
+    let attempts = 0;
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer(() => {
+          attempts += 1;
+          return attempts === 1
+            ? { status: 429, body: { error: "Too Many Requests" } }
+            : { body: chatCompletion("finally got through") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "full-access",
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+    // The retry schedule's first delay (500ms) is enough to clear a single
+    // rate-limited attempt; advance past it instead of waiting in real time.
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(Duration.seconds(1));
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(attempts, 2);
+    assert.isUndefined(runtimeEvents.find((event) => event.type === "session.exited"));
+  }),
+);
+
 it.effect("publishes session.exited when the model returns an empty response", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("nvidia-empty-response");
@@ -558,6 +606,55 @@ it.effect("rejects a read_file path that escapes the project root", () =>
     const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
     assert.isDefined(toolResultMessage);
     assert.include(toolResultMessage?.content as string, "outside the project root");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads a file by its absolute path when it's inside the project root", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+    yield* fs.writeFileString(`${cwd}/notes.txt`, "hello from disk");
+
+    // Models routinely echo back the absolute cwd they were told about
+    // instead of a relative path -- this used to get re-rooted into
+    // nonsense like `<cwd>/<cwd>/notes.txt` and fail to resolve.
+    const threadId = ThreadId.make("nvidia-tool-absolute-path");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  { id: "call_1", name: "read_file", args: { path: `${cwd}/notes.txt` } },
+                ]),
+              }
+            : { body: chatCompletion("The file says: hello from disk") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      event.type === "turn.completed" ? Deferred.succeed(turnCompleted, undefined) : Effect.void,
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "what does notes.txt say?" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(requests.length, 2);
+    const secondRoundMessages = requests[1]!.body.messages as Array<Record<string, unknown>>;
+    const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
+    assert.equal(toolResultMessage?.content, "hello from disk");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
