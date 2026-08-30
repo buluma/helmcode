@@ -1122,7 +1122,13 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
           typeof rawUsage?.completion_tokens === "number" ? rawUsage.completion_tokens : undefined;
         const totalTokens =
           typeof rawUsage?.total_tokens === "number" ? rawUsage.total_tokens : undefined;
-        const costUsd = typeof rawUsage?.cost === "number" ? rawUsage.cost : undefined;
+        // Gated on REPORTS_COST_USD, not just on the field being present --
+        // NVIDIA's catalog API isn't billed per-token and never asked for
+        // cost accounting, so a "cost" field on its response (unexpected
+        // today, but not contractually impossible) must not surface as a
+        // real totalCostUsd.
+        const costUsd =
+          REPORTS_COST_USD && typeof rawUsage?.cost === "number" ? rawUsage.cost : undefined;
         const usage: ChatCompletionUsage | undefined =
           inputTokens !== undefined ||
           outputTokens !== undefined ||
