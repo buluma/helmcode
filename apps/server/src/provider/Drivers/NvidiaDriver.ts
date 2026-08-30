@@ -83,13 +83,21 @@ export const NvidiaDriver: ProviderDriver<NvidiaSettings, NvidiaDriverEnv> = {
       const adapterInstance = yield* makeNvidiaAdapter({
         apiKey: effectiveConfig.apiKey,
         baseUrl: effectiveConfig.baseUrl,
-        defaultModel: "meta/llama-3.1-70b-instruct",
+        // meta/llama-3.1-70b-instruct (and the rest of NVIDIA's meta/llama-3.x
+        // line) reached end of life on 2026-08-26 and now returns HTTP 410 --
+        // this fallback only fires when a turn arrives without an explicit
+        // model selection, so it must stay pinned to a model NVIDIA still serves.
+        defaultModel: "nvidia/nemotron-3-super-120b-a12b",
       });
 
       const textGeneration = yield* makeOpenAICompatibleTextGeneration({
         apiKey: effectiveConfig.apiKey,
         baseUrl: effectiveConfig.baseUrl,
-        defaultModel: "meta/llama-3.1-70b-instruct",
+        // meta/llama-3.1-70b-instruct (and the rest of NVIDIA's meta/llama-3.x
+        // line) reached end of life on 2026-08-26 and now returns HTTP 410 --
+        // this fallback only fires when a turn arrives without an explicit
+        // model selection, so it must stay pinned to a model NVIDIA still serves.
+        defaultModel: "nvidia/nemotron-3-super-120b-a12b",
       });
 
       const continuationIdentity = defaultProviderContinuationIdentity({
