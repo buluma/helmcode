@@ -195,7 +195,7 @@ const handlers = {
       if (input.status !== undefined) {
         const state = yield* client.execute(
           "resolve-state",
-          `query ViewState($teamId: String!, $name: String!) {
+          `query ViewState($teamId: ID!, $name: String!) {
             workflowStates(
               filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }
               first: 1

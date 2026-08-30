@@ -244,6 +244,48 @@ describe("linear_update_issue", () => {
       );
     },
   );
+
+  it.effect(
+    "maps a status name onto the workflow state id using the team id typed as an ID",
+    () => {
+      const requests: CapturedRequest[] = [];
+      return Effect.gen(function* () {
+        yield* configureKey("test-key");
+        const result = yield* LinearToolkitHandlers.linear_update_issue({
+          identifier: "LIN-123",
+          title: "New title",
+          status: "In Progress",
+        });
+        assert.deepEqual(result, { issue: writeRef("LIN-123", "New title") });
+        assert.equal(requests.length, 3);
+        assert.match(requests[0]!.query, /issue\(id: \$identifier\)/);
+        assert.match(requests[1]!.query, /workflowStates/);
+        assert.match(requests[1]!.query, /\$teamId: ID!/);
+        assert.deepEqual(requests[1]!.variables, {
+          teamId: "team-1",
+          name: "In Progress",
+        });
+        assert.deepEqual(requests[2]!.variables.id, "uuid-1");
+        assert.deepEqual(requests[2]!.variables.input, {
+          title: "New title",
+          stateId: "state-1",
+        });
+      }).pipe(
+        Effect.provide(
+          makeClientLayer((request) => {
+            if (request.query.includes("issueUpdate")) {
+              return { issueUpdate: { issue: writeRef("LIN-123", "New title") } };
+            }
+            if (request.query.includes("workflowStates")) {
+              return { workflowStates: { nodes: [{ id: "state-1" }] } };
+            }
+            return { issue: { id: "uuid-1", team: { id: "team-1" } } };
+          }, requests),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
 });
 
 describe("linear_comment", () => {
