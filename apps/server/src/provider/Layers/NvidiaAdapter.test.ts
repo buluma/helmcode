@@ -198,7 +198,9 @@ it.effect("reports token usage but never a cost -- NVIDIA's catalog API isn't bi
               choices: [
                 { message: { role: "assistant", content: "Done." }, finish_reason: "stop" },
               ],
-              usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 },
+              // A cost field even though NVIDIA never requested one --
+              // proves the adapter ignores it rather than trusting it.
+              usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150, cost: 0.0042 },
             },
           };
         }),
