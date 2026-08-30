@@ -29,6 +29,7 @@ type CapturedRequest = {
     readonly model: string;
     readonly messages: ReadonlyArray<unknown>;
     readonly tools?: unknown;
+    readonly usage?: unknown;
   };
 };
 
@@ -182,6 +183,76 @@ it.effect("starts a session and completes a turn against a mocked chat completio
       { role: "user", content: "Say hello." },
       { role: "assistant", content: "Hello from OpenRouter." },
     ]);
+  }),
+);
+
+it.effect("requests and reports cost/token accounting from the chat completion response", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("openrouter-cost-usage");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return {
+            body: {
+              choices: [
+                { message: { role: "assistant", content: "Done." }, finish_reason: "stop" },
+              ],
+              usage: {
+                prompt_tokens: 120,
+                completion_tokens: 30,
+                total_tokens: 150,
+                cost: 0.0042,
+              },
+            },
+          };
+        }),
+      ),
+    );
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+    });
+    yield* adapter.sendTurn({ threadId, input: "Wrap it up." });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    // Cost accounting is opt-in on OpenRouter's API -- has to be requested.
+    assert.deepEqual(requests[0]!.body.usage, { include: true });
+
+    const usageUpdated = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+    assert.isDefined(usageUpdated);
+    if (usageUpdated?.type === "thread.token-usage.updated") {
+      assert.deepEqual(usageUpdated.payload.usage, {
+        usedTokens: 150,
+        inputTokens: 120,
+        outputTokens: 30,
+      });
+    }
+
+    const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+    assert.isDefined(completed);
+    if (completed?.type === "turn.completed") {
+      assert.equal(completed.payload.stopReason, "stop");
+      assert.equal(completed.payload.totalCostUsd, 0.0042);
+    }
   }),
 );
 
@@ -748,6 +819,103 @@ it.effect("runs a workspace tool call before answering when a cwd is set", () =>
 
     const thread = yield* adapter.readThread(threadId);
     assert.equal(thread.turns.length, 1);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("sums cost across tool-loop rounds but reports only the final round's tokens", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+    yield* fs.writeFileString(`${cwd}/notes.txt`, "hello from disk");
+
+    const threadId = ThreadId.make("openrouter-tool-loop-cost");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: {
+                  ...toolCallCompletion([
+                    { id: "call_1", name: "read_file", args: { path: "notes.txt" } },
+                  ]),
+                  usage: {
+                    prompt_tokens: 100,
+                    completion_tokens: 10,
+                    total_tokens: 110,
+                    cost: 0.001,
+                  },
+                },
+              }
+            : {
+                body: {
+                  choices: [
+                    {
+                      message: { role: "assistant", content: "The file says: hello from disk" },
+                      finish_reason: "stop",
+                    },
+                  ],
+                  usage: {
+                    prompt_tokens: 130,
+                    completion_tokens: 12,
+                    total_tokens: 142,
+                    cost: 0.0015,
+                  },
+                },
+              };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "what does notes.txt say?" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(requests.length, 2);
+
+    // Each round is a separately-billed call, so cost sums; each round
+    // resends the whole growing history, so token counts don't -- the last
+    // round's snapshot already reflects everything before it.
+    const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+    assert.isDefined(completed);
+    if (completed?.type === "turn.completed") {
+      assert.equal(completed.payload.totalCostUsd, 0.001 + 0.0015);
+      assert.equal(completed.payload.stopReason, "stop");
+    }
+
+    const usageEvents = runtimeEvents.filter(
+      (event) => event.type === "thread.token-usage.updated",
+    );
+    assert.equal(usageEvents.length, 1);
+    if (usageEvents[0]?.type === "thread.token-usage.updated") {
+      assert.deepEqual(usageEvents[0].payload.usage, {
+        usedTokens: 142,
+        inputTokens: 130,
+        outputTokens: 12,
+      });
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
