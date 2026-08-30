@@ -1580,7 +1580,12 @@ const make = Effect.gen(function* () {
             case "turn.started":
               return "running";
             case "session.exited":
-              return "stopped";
+              // exitKind "error" is the provider adapter dying on its own
+              // (e.g. an upstream HTTP failure) -- distinct from a user-
+              // initiated stop, and "stopped" here surfaces in the UI as
+              // "You stopped this response", which is wrong when nobody
+              // stopped anything.
+              return event.payload.exitKind === "error" ? "error" : "stopped";
             case "turn.completed":
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"

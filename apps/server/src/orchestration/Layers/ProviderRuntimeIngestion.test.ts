@@ -676,6 +676,42 @@ describe("ProviderRuntimeIngestion", () => {
     }),
   );
 
+  effectIt.effect(
+    "marks the session errored, not stopped, when session.exited carries exitKind error",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = asThreadId("thread-1");
+
+        harness.emit({
+          type: "turn.started",
+          eventId: asEventId("evt-turn-started-before-error-exit"),
+          provider: ProviderDriverKind.make("nvidia"),
+          threadId,
+          turnId: asTurnId("turn-before-error-exit"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        // A provider adapter dying on its own (e.g. an upstream HTTP
+        // failure) is not the same thing as the user stopping the turn --
+        // conflating the two is what made the UI show "You stopped this
+        // response" for a rate-limited request nobody stopped.
+        harness.emit({
+          type: "session.exited",
+          eventId: asEventId("evt-session-exited-error"),
+          provider: ProviderDriverKind.make("nvidia"),
+          threadId,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          payload: { exitKind: "error", recoverable: false, reason: "HTTP 429" },
+        });
+
+        yield* Effect.promise(() => harness.drain());
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.session?.status).toBe("error");
+      }),
+  );
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
