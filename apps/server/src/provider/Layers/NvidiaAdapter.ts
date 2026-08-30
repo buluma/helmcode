@@ -346,11 +346,12 @@ const runWorkspaceTool = (
  * duplicated in OpenRouterAdapter.ts. Marks a response as worth retrying;
  * never thrown for 4xx (bad key/model/quota), which are not transient.
  */
-class NvidiaTransientHttpError extends Error {
-  readonly status: number;
-  constructor(status: number, detail: string) {
-    super(detail);
-    this.status = status;
+class NvidiaTransientHttpError extends Schema.TaggedErrorClass<NvidiaTransientHttpError>()(
+  "NvidiaTransientHttpError",
+  { status: Schema.Number, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -360,7 +361,17 @@ class NvidiaTransientHttpError extends Error {
  * calling, so this drives one fallback retry without tools instead of
  * failing turns against models that don't.
  */
-class NvidiaToolsUnsupportedError extends Error {}
+class NvidiaToolsUnsupportedError extends Schema.TaggedErrorClass<NvidiaToolsUnsupportedError>()(
+  "NvidiaToolsUnsupportedError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+const isNvidiaTransientHttpError = Schema.is(NvidiaTransientHttpError);
+const isNvidiaToolsUnsupportedError = Schema.is(NvidiaToolsUnsupportedError);
 
 interface ChatCompletionResult {
   readonly content: string | null;
@@ -478,14 +489,14 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         );
         const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
         if (response.status >= 500) {
-          return yield* Effect.fail(new NvidiaTransientHttpError(response.status, detail));
+          return yield* new NvidiaTransientHttpError({ status: response.status, detail });
         }
         // Not every model behind NVIDIA NIM supports function calling, and
         // there's no reliable capability list to check up front -- a 400
         // that only shows up when `tools` was sent is the signal to retry
         // once without it rather than fail the whole turn.
         if (payload.tools && response.status === 400) {
-          return yield* Effect.fail(new NvidiaToolsUnsupportedError(detail));
+          return yield* new NvidiaToolsUnsupportedError({ detail });
         }
         return yield* new ProviderAdapterRequestError({
           provider: NVIDIA,
@@ -547,7 +558,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
   ) =>
     effect.pipe(
       Effect.retry({
-        while: (error) => error instanceof NvidiaTransientHttpError,
+        while: (error) => isNvidiaTransientHttpError(error),
         schedule: NVIDIA_HTTP_RETRY_SCHEDULE,
       }),
     );
@@ -555,7 +566,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
   const toRequestError = (
     error: ProviderAdapterRequestError | NvidiaTransientHttpError | NvidiaToolsUnsupportedError,
   ): ProviderAdapterRequestError =>
-    error instanceof NvidiaTransientHttpError || error instanceof NvidiaToolsUnsupportedError
+    isNvidiaTransientHttpError(error) || isNvidiaToolsUnsupportedError(error)
       ? new ProviderAdapterRequestError({
           provider: NVIDIA,
           method: "chat.completions",
@@ -573,7 +584,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
       Effect.catch((error) => {
         // One fallback attempt without tools when the model/deployment
         // rejected the tools field outright -- see NvidiaToolsUnsupportedError.
-        if (error instanceof NvidiaToolsUnsupportedError && payload.tools) {
+        if (isNvidiaToolsUnsupportedError(error) && payload.tools) {
           return retryTransient(attemptChatCompletions({ ...payload, tools: undefined })).pipe(
             Effect.catch((fallbackError) => Effect.fail(toRequestError(fallbackError))),
           );

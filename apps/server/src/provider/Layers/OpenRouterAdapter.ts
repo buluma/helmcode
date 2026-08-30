@@ -347,11 +347,12 @@ const runWorkspaceTool = (
  * response as worth retrying; never thrown for 4xx (bad key/model/quota),
  * which are not transient.
  */
-class OpenRouterTransientHttpError extends Error {
-  readonly status: number;
-  constructor(status: number, detail: string) {
-    super(detail);
-    this.status = status;
+class OpenRouterTransientHttpError extends Schema.TaggedErrorClass<OpenRouterTransientHttpError>()(
+  "OpenRouterTransientHttpError",
+  { status: Schema.Number, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -361,7 +362,17 @@ class OpenRouterTransientHttpError extends Error {
  * support function calling, so this drives one fallback retry without
  * tools instead of failing turns against models that don't.
  */
-class OpenRouterToolsUnsupportedError extends Error {}
+class OpenRouterToolsUnsupportedError extends Schema.TaggedErrorClass<OpenRouterToolsUnsupportedError>()(
+  "OpenRouterToolsUnsupportedError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+const isOpenRouterTransientHttpError = Schema.is(OpenRouterTransientHttpError);
+const isOpenRouterToolsUnsupportedError = Schema.is(OpenRouterToolsUnsupportedError);
 
 interface ChatCompletionResult {
   readonly content: string | null;
@@ -479,14 +490,14 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         );
         const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
         if (response.status >= 500) {
-          return yield* Effect.fail(new OpenRouterTransientHttpError(response.status, detail));
+          return yield* new OpenRouterTransientHttpError({ status: response.status, detail });
         }
         // Not every model available through OpenRouter supports function
         // calling, and there's no reliable capability list to check up
         // front -- a 400 that only shows up when `tools` was sent is the
         // signal to retry once without it rather than fail the whole turn.
         if (payload.tools && response.status === 400) {
-          return yield* Effect.fail(new OpenRouterToolsUnsupportedError(detail));
+          return yield* new OpenRouterToolsUnsupportedError({ detail });
         }
         return yield* new ProviderAdapterRequestError({
           provider: OPENROUTER,
@@ -548,7 +559,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
   ) =>
     effect.pipe(
       Effect.retry({
-        while: (error) => error instanceof OpenRouterTransientHttpError,
+        while: (error) => isOpenRouterTransientHttpError(error),
         schedule: OPENROUTER_HTTP_RETRY_SCHEDULE,
       }),
     );
@@ -559,8 +570,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       | OpenRouterTransientHttpError
       | OpenRouterToolsUnsupportedError,
   ): ProviderAdapterRequestError =>
-    error instanceof OpenRouterTransientHttpError ||
-    error instanceof OpenRouterToolsUnsupportedError
+    isOpenRouterTransientHttpError(error) || isOpenRouterToolsUnsupportedError(error)
       ? new ProviderAdapterRequestError({
           provider: OPENROUTER,
           method: "chat.completions",
@@ -578,7 +588,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       Effect.catch((error) => {
         // One fallback attempt without tools when the model/deployment
         // rejected the tools field outright -- see OpenRouterToolsUnsupportedError.
-        if (error instanceof OpenRouterToolsUnsupportedError && payload.tools) {
+        if (isOpenRouterToolsUnsupportedError(error) && payload.tools) {
           return retryTransient(attemptChatCompletions({ ...payload, tools: undefined })).pipe(
             Effect.catch((fallbackError) => Effect.fail(toRequestError(fallbackError))),
           );
