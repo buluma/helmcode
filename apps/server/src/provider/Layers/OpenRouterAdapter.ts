@@ -5,10 +5,14 @@ import type {
 } from "../Services/ProviderAdapter.ts";
 import { PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY } from "../runtimeEventQueueCapacity.ts";
 
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
@@ -33,25 +37,451 @@ const OPENROUTER = ProviderDriverKind.make("openrouter");
 const encodeJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
+interface ChatToolCall {
+  readonly id: string;
+  readonly type: "function";
+  readonly function: { readonly name: string; readonly arguments: string };
+}
+
+/**
+ * Narrows an API response's `tool_calls` field to well-formed entries only.
+ * The API response is untyped JSON -- a model or a proxy in front of it can
+ * return a tool_call missing `function`/`arguments`, and every downstream
+ * consumer (the tool-call loop, argument summaries) assumes those fields
+ * exist. A malformed entry is dropped rather than crashing the turn.
+ */
+function sanitizeToolCalls(value: unknown): Array<ChatToolCall> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: Array<ChatToolCall> = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const id = (entry as Record<string, unknown>).id;
+    const fn = (entry as Record<string, unknown>).function;
+    if (typeof id !== "string" || !fn || typeof fn !== "object") {
+      continue;
+    }
+    const name = (fn as Record<string, unknown>).name;
+    const args = (fn as Record<string, unknown>).arguments;
+    if (typeof name !== "string" || typeof args !== "string") {
+      continue;
+    }
+    result.push({ id, type: "function", function: { name, arguments: args } });
+  }
+  return result;
+}
+
+/**
+ * OpenAI-compatible chat message shapes. `assistant` carries `tool_calls`
+ * when the model wants a tool run instead of answering; `tool` carries the
+ * result back, keyed by `tool_call_id` to the call it answers.
+ */
+type ChatMessage =
+  | { readonly role: "system" | "user"; readonly content: string }
+  | {
+      readonly role: "assistant";
+      readonly content: string | null;
+      readonly tool_calls?: ReadonlyArray<ChatToolCall>;
+    }
+  | { readonly role: "tool"; readonly content: string; readonly tool_call_id: string };
+
 interface Session {
   readonly cwd: string | undefined;
-  readonly messages: Array<{ readonly role: "user" | "assistant"; readonly content: string }>;
+  readonly messages: Array<ChatMessage>;
+  /**
+   * Raw-message count appended per turn, in order, so readThread/rollbackThread
+   * can find turn boundaries -- a turn with tool calls appends more than the
+   * fixed 2 messages (user + assistant) a plain text turn does.
+   */
+  readonly turnMessageCounts: Array<number>;
 }
 
 const sessions = new Map<ThreadId, Session>();
 
-// This adapter is a bare chat-completions passthrough -- no tool calling, no
-// filesystem access -- so the model otherwise has nothing telling it which
-// repo it's supposedly helping with. A system message naming the working
-// directory at least stops it from claiming no codebase was shared.
-function systemMessageFor(cwd: string | undefined): { role: "system"; content: string } {
-  return {
-    role: "system",
-    content: cwd
-      ? `You are assisting with the project checked out at ${cwd}. You have no file, shell, or tool access -- you cannot read or list its contents. If the user asks about code, ask them to paste it.`
-      : "You have no file, shell, or tool access -- you cannot read or list any codebase. If the user asks about code, ask them to paste it.",
-  };
+// This adapter's tool set is deliberately read-only: no writes, no shell
+// exec, no approval flow. respondToRequest/respondToUserInput below stay
+// unsupported -- there's nothing here that needs a human decision.
+const WORKSPACE_TOOL_MAX_FILE_BYTES = 256 * 1024;
+const WORKSPACE_TOOL_MAX_ENTRIES = 500;
+// Bounds the directory walk itself (files + directories visited), separate
+// from WORKSPACE_TOOL_MAX_ENTRIES/MAX_MATCHES, which only cap what gets
+// returned after the walk. Without this, listing or searching a huge tree
+// (or one where an excluded directory wasn't actually excluded) did
+// unbounded work before ever applying those caps.
+const WORKSPACE_TOOL_MAX_SCAN_ENTRIES = 2000;
+const WORKSPACE_TOOL_MAX_MATCHES = 200;
+const WORKSPACE_TOOL_EXCLUDED_DIR_NAMES = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  ".turbo",
+]);
+
+const OPENROUTER_WORKSPACE_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "read_file",
+      description: "Read a text file's contents, given a path relative to the project root.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Path relative to the project root." },
+        },
+        required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_directory",
+      description: "List entries in a directory relative to the project root.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Directory path relative to the project root. Defaults to the root.",
+          },
+          recursive: {
+            type: "boolean",
+            description: "List nested directories too. Defaults to false.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_text",
+      description:
+        "Search for a substring (case-insensitive) across text files under a directory relative to the project root.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Text to search for." },
+          path: {
+            type: "string",
+            description:
+              "Directory to search under, relative to the project root. Defaults to the root.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+] as const;
+
+/**
+ * Resolves a model-supplied relative path against `cwd`, rejecting anything
+ * that escapes it. Two layers: a lexical normalize-then-startsWith check
+ * (mirrors resolveAttachmentRelativePath in attachmentPaths.ts) rejects `..`
+ * traversal and absolute paths outright, then an fs.realPath containment
+ * check on whatever survives catches a symlink that resolves outside `cwd`
+ * without ever appearing to escape it lexically. Missing paths (ENOENT) are
+ * not an escape -- callers surface those as their own tool-result error.
+ */
+const resolveWorkspacePath = (
+  fs: FileSystem.FileSystem,
+  cwd: string,
+  relativePath: string,
+): Effect.Effect<string | null> =>
+  Effect.gen(function* () {
+    if (relativePath.includes("\0")) {
+      return null;
+    }
+    const normalized = NodePath.normalize(relativePath || ".").replace(/^[/\\]+/, "");
+    const root = NodePath.resolve(cwd);
+    const lexicallyResolved = NodePath.resolve(NodePath.join(root, normalized));
+    if (lexicallyResolved !== root && !lexicallyResolved.startsWith(`${root}${NodePath.sep}`)) {
+      return null;
+    }
+
+    const realRoot = yield* fs.realPath(root).pipe(Effect.result);
+    const realTarget = yield* fs.realPath(lexicallyResolved).pipe(Effect.result);
+    // A target that doesn't exist yet can't have a real path to compare --
+    // fall through to the caller's own not-found handling instead of
+    // treating a missing file as an escape attempt.
+    if (realTarget._tag === "Failure" || realRoot._tag === "Failure") {
+      return lexicallyResolved;
+    }
+    if (
+      realTarget.success !== realRoot.success &&
+      !realTarget.success.startsWith(`${realRoot.success}${NodePath.sep}`)
+    ) {
+      return null;
+    }
+    return lexicallyResolved;
+  });
+
+function isExcludedWorkspaceSegment(segment: string): boolean {
+  return WORKSPACE_TOOL_EXCLUDED_DIR_NAMES.has(segment);
 }
+
+interface WorkspaceWalkEntry {
+  readonly relativePath: string;
+  readonly absolutePath: string;
+  readonly type: FileSystem.File.Info["type"];
+}
+
+/**
+ * Breadth-first walk of `root`, bounded and symlink-safe. Two things a plain
+ * `fs.readDirectory(root, { recursive: true })` doesn't give us:
+ *
+ * - Excluded directories (node_modules, .git, ...) are skipped before ever
+ *   descending into them, not filtered out of the full listing afterward --
+ *   the earlier version walked the whole excluded subtree first and threw
+ *   the result away.
+ * - Every entry's realpath is checked against `realRoot` before it's
+ *   trusted, so a symlink anywhere in the tree that points outside `root`
+ *   (not just at `root` itself) can't be read through.
+ *
+ * Stops after `maxEntries` regardless of how much of the tree remains, so a
+ * huge or pathological directory can't turn one tool call into an unbounded
+ * scan.
+ */
+const walkWorkspaceEntries = (
+  fs: FileSystem.FileSystem,
+  root: string,
+  realRoot: string,
+  options: { readonly recursive: boolean; readonly maxEntries: number },
+): Effect.Effect<{
+  readonly entries: ReadonlyArray<WorkspaceWalkEntry>;
+  readonly truncated: boolean;
+}> =>
+  Effect.gen(function* () {
+    const results: Array<WorkspaceWalkEntry> = [];
+    const queue: Array<string> = [""];
+    let truncated = false;
+
+    while (queue.length > 0) {
+      const relDir = queue.shift()!;
+      const dirPath = relDir.length > 0 ? NodePath.join(root, relDir) : root;
+      const names = yield* fs.readDirectory(dirPath).pipe(Effect.result);
+      if (names._tag === "Failure") {
+        continue;
+      }
+
+      for (const name of names.success) {
+        if (results.length >= options.maxEntries) {
+          truncated = true;
+          break;
+        }
+        if (isExcludedWorkspaceSegment(name)) {
+          continue;
+        }
+
+        const relativePath = relDir.length > 0 ? `${relDir}/${name}` : name;
+        const absolutePath = NodePath.join(root, relativePath);
+
+        const real = yield* fs.realPath(absolutePath).pipe(Effect.result);
+        if (real._tag === "Failure") {
+          continue;
+        }
+        if (real.success !== realRoot && !real.success.startsWith(`${realRoot}${NodePath.sep}`)) {
+          continue;
+        }
+
+        const stat = yield* fs.stat(absolutePath).pipe(Effect.result);
+        if (stat._tag === "Failure") {
+          continue;
+        }
+
+        results.push({ relativePath, absolutePath, type: stat.success.type });
+        if (options.recursive && stat.success.type === "Directory") {
+          queue.push(relativePath);
+        }
+      }
+
+      if (truncated) {
+        break;
+      }
+    }
+
+    return { entries: results, truncated };
+  });
+
+const readWorkspaceFileTool = (
+  fs: FileSystem.FileSystem,
+  cwd: string,
+  args: { readonly path?: unknown },
+): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const rawPath = typeof args.path === "string" ? args.path : undefined;
+    if (!rawPath) {
+      return "Error: 'path' is required.";
+    }
+    const resolved = yield* resolveWorkspacePath(fs, cwd, rawPath);
+    if (!resolved) {
+      return `Error: path '${rawPath}' is outside the project root.`;
+    }
+    const stat = yield* fs.stat(resolved).pipe(Effect.result);
+    if (stat._tag === "Failure") {
+      return `Error: could not stat '${rawPath}': ${stat.failure.message}`;
+    }
+    if (stat.success.type !== "File") {
+      return `Error: '${rawPath}' is not a regular file.`;
+    }
+    const content = yield* fs.readFileString(resolved).pipe(Effect.result);
+    if (content._tag === "Failure") {
+      return `Error: could not read '${rawPath}': ${content.failure.message}`;
+    }
+    const bytes = Buffer.byteLength(content.success, "utf8");
+    if (bytes <= WORKSPACE_TOOL_MAX_FILE_BYTES) {
+      return content.success;
+    }
+    const truncated = Buffer.from(content.success, "utf8")
+      .subarray(0, WORKSPACE_TOOL_MAX_FILE_BYTES)
+      .toString("utf8");
+    return `${truncated}\n... (truncated at ${WORKSPACE_TOOL_MAX_FILE_BYTES} bytes)`;
+  });
+
+/**
+ * Resolves `resolved` to its realpath for use as the walk's containment
+ * root. Distinct from resolveWorkspacePath's own realpath check (which only
+ * verifies `resolved` itself doesn't escape `cwd`) -- this is the value
+ * every entry found during the walk gets compared against.
+ */
+const realWorkspaceRoot = (
+  fs: FileSystem.FileSystem,
+  resolved: string,
+): Effect.Effect<string | null> =>
+  fs.realPath(resolved).pipe(
+    Effect.result,
+    Effect.map((result) => (result._tag === "Success" ? result.success : null)),
+  );
+
+const listWorkspaceDirectoryTool = (
+  fs: FileSystem.FileSystem,
+  cwd: string,
+  args: { readonly path?: unknown; readonly recursive?: unknown },
+): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const rawPath = typeof args.path === "string" ? args.path : ".";
+    const recursive = args.recursive === true;
+    const resolved = yield* resolveWorkspacePath(fs, cwd, rawPath);
+    if (!resolved) {
+      return `Error: path '${rawPath}' is outside the project root.`;
+    }
+    const realRoot = yield* realWorkspaceRoot(fs, resolved);
+    if (!realRoot) {
+      return `Error: could not resolve '${rawPath}'.`;
+    }
+
+    const { entries, truncated } = yield* walkWorkspaceEntries(fs, resolved, realRoot, {
+      recursive,
+      maxEntries: Math.min(WORKSPACE_TOOL_MAX_ENTRIES, WORKSPACE_TOOL_MAX_SCAN_ENTRIES),
+    });
+    const listing =
+      entries.length > 0 ? entries.map((entry) => entry.relativePath).join("\n") : "(empty)";
+    return truncated
+      ? `${listing}\n... (truncated at ${WORKSPACE_TOOL_MAX_ENTRIES} entries)`
+      : listing;
+  });
+
+const searchWorkspaceTextTool = (
+  fs: FileSystem.FileSystem,
+  cwd: string,
+  args: { readonly query?: unknown; readonly path?: unknown },
+): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const query = typeof args.query === "string" ? args.query : undefined;
+    if (!query) {
+      return "Error: 'query' is required.";
+    }
+    const rawPath = typeof args.path === "string" ? args.path : ".";
+    const root = yield* resolveWorkspacePath(fs, cwd, rawPath);
+    if (!root) {
+      return `Error: path '${rawPath}' is outside the project root.`;
+    }
+    const realRoot = yield* realWorkspaceRoot(fs, root);
+    if (!realRoot) {
+      return `Error: could not resolve '${rawPath}'.`;
+    }
+
+    const { entries, truncated: scanTruncated } = yield* walkWorkspaceEntries(fs, root, realRoot, {
+      recursive: true,
+      maxEntries: WORKSPACE_TOOL_MAX_SCAN_ENTRIES,
+    });
+
+    const needle = query.toLowerCase();
+    const matches: Array<string> = [];
+    for (const entry of entries) {
+      if (matches.length >= WORKSPACE_TOOL_MAX_MATCHES) {
+        break;
+      }
+      if (entry.type !== "File") {
+        continue;
+      }
+      const stat = yield* fs.stat(entry.absolutePath).pipe(Effect.result);
+      if (stat._tag === "Failure" || stat.success.size > BigInt(WORKSPACE_TOOL_MAX_FILE_BYTES)) {
+        continue;
+      }
+      const content = yield* fs.readFileString(entry.absolutePath).pipe(Effect.result);
+      if (content._tag === "Failure") {
+        continue;
+      }
+      // Binary files decode as text containing the replacement character or
+      // NUL bytes on a mismatched encoding; skip rather than spam matches.
+      if (content.success.includes("\0")) {
+        continue;
+      }
+      const lines = content.success.split("\n");
+      for (let i = 0; i < lines.length && matches.length < WORKSPACE_TOOL_MAX_MATCHES; i++) {
+        if (lines[i]!.toLowerCase().includes(needle)) {
+          matches.push(`${entry.relativePath}:${i + 1}: ${lines[i]!.trim().slice(0, 300)}`);
+        }
+      }
+    }
+
+    const scanNote = scanTruncated
+      ? `\n... (scan stopped at ${WORKSPACE_TOOL_MAX_SCAN_ENTRIES} files/directories -- results may be incomplete)`
+      : "";
+
+    if (matches.length === 0) {
+      return `No matches found.${scanNote}`;
+    }
+    return matches.length >= WORKSPACE_TOOL_MAX_MATCHES
+      ? `${matches.join("\n")}\n... (truncated at ${WORKSPACE_TOOL_MAX_MATCHES} matches)${scanNote}`
+      : `${matches.join("\n")}${scanNote}`;
+  });
+
+/**
+ * Dispatches one model tool call to its implementation. Never fails: a
+ * malformed arguments payload or an unknown tool name becomes an error
+ * string in the tool result, the same way a bad path does, so the model can
+ * see what went wrong and retry instead of the whole turn dying.
+ */
+const runWorkspaceTool = (
+  fs: FileSystem.FileSystem,
+  cwd: string,
+  toolCall: ChatToolCall,
+): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    const parsed = decodeJsonStringExit(toolCall.function.arguments);
+    const args = (parsed._tag === "Success" ? parsed.value : {}) as Record<string, unknown>;
+    if (parsed._tag === "Failure") {
+      return `Error: could not parse arguments for '${toolCall.function.name}'.`;
+    }
+
+    switch (toolCall.function.name) {
+      case "read_file":
+        return yield* readWorkspaceFileTool(fs, cwd, args);
+      case "list_directory":
+        return yield* listWorkspaceDirectoryTool(fs, cwd, args);
+      case "search_text":
+        return yield* searchWorkspaceTextTool(fs, cwd, args);
+      default:
+        return `Error: unknown tool '${toolCall.function.name}'.`;
+    }
+  });
 
 /**
  * Upstream gateways occasionally 500 on transient plumbing issues (observed
@@ -61,12 +491,36 @@ function systemMessageFor(cwd: string | undefined): { role: "system"; content: s
  * response as worth retrying; never thrown for 4xx (bad key/model/quota),
  * which are not transient.
  */
-class OpenRouterTransientHttpError extends Error {
-  readonly status: number;
-  constructor(status: number, detail: string) {
-    super(detail);
-    this.status = status;
+class OpenRouterTransientHttpError extends Schema.TaggedErrorClass<OpenRouterTransientHttpError>()(
+  "OpenRouterTransientHttpError",
+  { status: Schema.Number, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
   }
+}
+
+/**
+ * Signals a 400 that only showed up because `tools` was sent -- there's no
+ * reliable up-front list of which models available through OpenRouter
+ * support function calling, so this drives one fallback retry without
+ * tools instead of failing turns against models that don't.
+ */
+class OpenRouterToolsUnsupportedError extends Schema.TaggedErrorClass<OpenRouterToolsUnsupportedError>()(
+  "OpenRouterToolsUnsupportedError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+const isOpenRouterTransientHttpError = Schema.is(OpenRouterTransientHttpError);
+const isOpenRouterToolsUnsupportedError = Schema.is(OpenRouterToolsUnsupportedError);
+
+interface ChatCompletionResult {
+  readonly content: string | null;
+  readonly toolCalls: ReadonlyArray<ChatToolCall>;
 }
 
 // Retried request never touched session state or produced any content, so
@@ -75,6 +529,19 @@ class OpenRouterTransientHttpError extends Error {
 const OPENROUTER_HTTP_RETRY_SCHEDULE = Schedule.exponential("500 millis").pipe(
   Schedule.upTo({ times: 3 }),
 );
+
+// This adapter has read-only workspace tools (read_file, list_directory,
+// search_text) but no shell exec and no write access, so the model still
+// needs to be told the shape of its access rather than assume parity with a
+// full coding agent.
+function systemMessageFor(cwd: string | undefined): { role: "system"; content: string } {
+  return {
+    role: "system",
+    content: cwd
+      ? `You are assisting with the project checked out at ${cwd}. You have read-only tools to read files, list directories, and search text under this path -- you cannot write files or run shell commands. Use the tools before answering questions about the code.`
+      : "You have no file, shell, or tool access -- you cannot read or list any codebase. If the user asks about code, ask them to paste it.",
+  };
+}
 
 export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function* (input: {
   readonly apiKey: string;
@@ -88,6 +555,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
 
   const crypto = yield* Crypto.Crypto;
   const httpClient = yield* HttpClient.HttpClient;
+  const fs = yield* FileSystem.FileSystem;
 
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -105,14 +573,19 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const attemptChatCompletions = (payload: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    readonly messages: ReadonlyArray<ChatMessage>;
     readonly model: string;
-  }): Effect.Effect<string, ProviderAdapterRequestError | OpenRouterTransientHttpError> =>
+    readonly tools?: typeof OPENROUTER_WORKSPACE_TOOLS | undefined;
+  }): Effect.Effect<
+    ChatCompletionResult,
+    ProviderAdapterRequestError | OpenRouterTransientHttpError | OpenRouterToolsUnsupportedError
+  > =>
     Effect.gen(function* () {
       const bodyEncoded = encodeJsonStringExit({
         model: payload.model,
         messages: payload.messages,
         temperature: 0.2,
+        ...(payload.tools ? { tools: payload.tools, tool_choice: "auto" } : {}),
       });
       const bodyText =
         bodyEncoded._tag === "Failure"
@@ -161,7 +634,14 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         );
         const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
         if (response.status >= 500) {
-          return yield* Effect.fail(new OpenRouterTransientHttpError(response.status, detail));
+          return yield* new OpenRouterTransientHttpError({ status: response.status, detail });
+        }
+        // Not every model available through OpenRouter supports function
+        // calling, and there's no reliable capability list to check up
+        // front -- a 400 that only shows up when `tools` was sent is the
+        // signal to retry once without it rather than fail the whole turn.
+        if (payload.tools && response.status === 400) {
+          return yield* new OpenRouterToolsUnsupportedError({ detail });
         }
         return yield* new ProviderAdapterRequestError({
           provider: OPENROUTER,
@@ -199,10 +679,10 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       });
 
       const choices = (parsed.choices as Array<Record<string, unknown>> | undefined) ?? [];
-      const content = (choices[0]?.message as Record<string, unknown> | undefined)?.content as
-        | string
-        | undefined;
-      if (!content || content.trim().length === 0) {
+      const message = choices[0]?.message as Record<string, unknown> | undefined;
+      const content = typeof message?.content === "string" ? message.content : null;
+      const toolCalls = sanitizeToolCalls(message?.tool_calls);
+      if ((!content || content.trim().length === 0) && toolCalls.length === 0) {
         return yield* new ProviderAdapterRequestError({
           provider: OPENROUTER,
           method: "chat.completions",
@@ -210,35 +690,62 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         });
       }
 
-      return content;
+      return { content, toolCalls };
     });
 
-  const callChatCompletions = (payload: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
-    readonly model: string;
-  }): Effect.Effect<string, ProviderAdapterRequestError> =>
-    attemptChatCompletions(payload).pipe(
+  const retryTransient = <A>(
+    effect: Effect.Effect<
+      A,
+      ProviderAdapterRequestError | OpenRouterTransientHttpError | OpenRouterToolsUnsupportedError
+    >,
+  ) =>
+    effect.pipe(
       Effect.retry({
-        while: (error) => error instanceof OpenRouterTransientHttpError,
+        while: (error) => isOpenRouterTransientHttpError(error),
         schedule: OPENROUTER_HTTP_RETRY_SCHEDULE,
       }),
-      Effect.catch((error) =>
-        Effect.fail(
-          error instanceof OpenRouterTransientHttpError
-            ? new ProviderAdapterRequestError({
-                provider: OPENROUTER,
-                method: "chat.completions",
-                detail: error.message,
-                cause: error,
-              })
-            : error,
-        ),
-      ),
+    );
+
+  const toRequestError = (
+    error:
+      | ProviderAdapterRequestError
+      | OpenRouterTransientHttpError
+      | OpenRouterToolsUnsupportedError,
+  ): ProviderAdapterRequestError =>
+    isOpenRouterTransientHttpError(error) || isOpenRouterToolsUnsupportedError(error)
+      ? new ProviderAdapterRequestError({
+          provider: OPENROUTER,
+          method: "chat.completions",
+          detail: error.message,
+          cause: error,
+        })
+      : error;
+
+  const callChatCompletions = (payload: {
+    readonly messages: ReadonlyArray<ChatMessage>;
+    readonly model: string;
+    readonly tools?: typeof OPENROUTER_WORKSPACE_TOOLS | undefined;
+  }): Effect.Effect<ChatCompletionResult, ProviderAdapterRequestError> =>
+    retryTransient(attemptChatCompletions(payload)).pipe(
+      Effect.catch((error) => {
+        // One fallback attempt without tools when the model/deployment
+        // rejected the tools field outright -- see OpenRouterToolsUnsupportedError.
+        if (isOpenRouterToolsUnsupportedError(error) && payload.tools) {
+          return retryTransient(attemptChatCompletions({ ...payload, tools: undefined })).pipe(
+            Effect.catch((fallbackError) => Effect.fail(toRequestError(fallbackError))),
+          );
+        }
+        return Effect.fail(toRequestError(error));
+      }),
     );
 
   const startSession: OpenRouterAdapterShape["startSession"] = (sessionInput) =>
     Effect.gen(function* () {
-      sessions.set(sessionInput.threadId, { cwd: sessionInput.cwd, messages: [] });
+      sessions.set(sessionInput.threadId, {
+        cwd: sessionInput.cwd,
+        messages: [],
+        turnMessageCounts: [],
+      });
 
       yield* publish({
         eventId: yield* nextEventId,
@@ -258,6 +765,104 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         createdAt: yield* nowIso,
         updatedAt: yield* nowIso,
       };
+    });
+
+  // Caps total round-trips per turn -- cheap to raise later, exists purely to
+  // bound cost/latency against a model that keeps calling tools instead of
+  // answering.
+  const OPENROUTER_TOOL_LOOP_MAX_ROUNDS = 8;
+
+  /**
+   * Drives the tool-call round-trip for one turn: calls chat/completions,
+   * and for as long as the model asks for tool calls instead of answering,
+   * executes them locally and feeds the results back. Returns every raw
+   * message the loop appended (tool_calls, tool results, final answer) so
+   * the caller can both persist them into session history and know the
+   * user-facing text. Tools are omitted entirely when `cwd` is unknown --
+   * there's nothing to sandbox them to.
+   */
+  const runToolLoop = (loopInput: {
+    readonly cwd: string | undefined;
+    readonly model: string;
+    readonly history: ReadonlyArray<ChatMessage>;
+    readonly userMessage: ChatMessage;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }): Effect.Effect<
+    { readonly appendedMessages: ReadonlyArray<ChatMessage>; readonly finalText: string },
+    ProviderAdapterRequestError
+  > =>
+    Effect.gen(function* () {
+      const appended: Array<ChatMessage> = [loopInput.userMessage];
+      const cwd = loopInput.cwd;
+
+      for (let round = 0; round < OPENROUTER_TOOL_LOOP_MAX_ROUNDS; round++) {
+        const result = yield* callChatCompletions({
+          messages: [systemMessageFor(cwd), ...loopInput.history, ...appended],
+          model: loopInput.model,
+          tools: cwd !== undefined ? OPENROUTER_WORKSPACE_TOOLS : undefined,
+        });
+
+        if (result.toolCalls.length === 0) {
+          const finalText = result.content ?? "";
+          appended.push({ role: "assistant", content: finalText });
+          return { appendedMessages: appended, finalText };
+        }
+
+        appended.push({
+          role: "assistant",
+          content: result.content,
+          tool_calls: result.toolCalls,
+        });
+
+        for (const toolCall of result.toolCalls) {
+          const argsSummary = toolCall.function.arguments.trim().slice(0, 200) || "{}";
+          yield* publish({
+            eventId: yield* nextEventId,
+            provider: OPENROUTER,
+            threadId: loopInput.threadId,
+            turnId: loopInput.turnId,
+            createdAt: yield* nowIso,
+            type: "item.started",
+            payload: {
+              itemType: "dynamic_tool_call",
+              status: "inProgress",
+              title: toolCall.function.name,
+              detail: argsSummary,
+            },
+          });
+
+          // cwd is defined whenever tools were offered (the only way a
+          // tool_call can exist), so this is never called without one.
+          const toolResult = yield* runWorkspaceTool(fs, cwd!, toolCall);
+
+          yield* publish({
+            eventId: yield* nextEventId,
+            provider: OPENROUTER,
+            threadId: loopInput.threadId,
+            turnId: loopInput.turnId,
+            createdAt: yield* nowIso,
+            type: "item.completed",
+            payload: {
+              itemType: "dynamic_tool_call",
+              status: "completed",
+              title: toolCall.function.name,
+              detail: toolResult.trim().length > 0 ? toolResult.trim().slice(0, 2000) : "(empty)",
+            },
+          });
+
+          appended.push({
+            role: "tool",
+            content: toolResult,
+            tool_call_id: toolCall.id,
+          });
+        }
+      }
+
+      const finalText =
+        "I hit the tool-call round limit while looking into this. Ask again to continue -- I'll pick up where I left off.";
+      appended.push({ role: "assistant", content: finalText });
+      return { appendedMessages: appended, finalText };
     });
 
   const sendTurn: OpenRouterAdapterShape["sendTurn"] = (turnInput) =>
@@ -293,24 +898,21 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
           payload: { model: turnInput.modelSelection?.model ?? input.defaultModel },
         });
 
-        const userMessage = turnInput.input ?? "";
+        const userMessage: ChatMessage = { role: "user", content: turnInput.input ?? "" };
 
-        const fullText = yield* callChatCompletions({
-          messages: [
-            systemMessageFor(session.cwd),
-            ...session.messages,
-            { role: "user" as const, content: userMessage },
-          ],
+        const { appendedMessages, finalText } = yield* runToolLoop({
+          cwd: session.cwd,
           model: turnInput.modelSelection?.model ?? input.defaultModel,
+          history: session.messages,
+          userMessage,
+          threadId: turnInput.threadId,
+          turnId,
         });
 
         sessions.set(turnInput.threadId, {
           cwd: session.cwd,
-          messages: [
-            ...session.messages,
-            { role: "user" as const, content: userMessage },
-            { role: "assistant" as const, content: fullText },
-          ],
+          messages: [...session.messages, ...appendedMessages],
+          turnMessageCounts: [...session.turnMessageCounts, appendedMessages.length],
         });
 
         yield* publish({
@@ -320,7 +922,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
           turnId,
           createdAt: yield* nowIso,
           type: "content.delta",
-          payload: { streamKind: "assistant_text", delta: fullText },
+          payload: { streamKind: "assistant_text", delta: finalText },
         });
 
         yield* publish({
@@ -334,7 +936,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
             itemType: "assistant_message",
             status: "completed",
             title: "Assistant message",
-            detail: fullText,
+            detail: finalText.trim().length > 0 ? finalText : "(empty)",
           },
         });
 
@@ -463,17 +1065,13 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       }
 
       const turns: Array<ProviderThreadTurnSnapshot> = [];
-      for (let i = 0; i < session.messages.length; i += 2) {
-        const items: Array<unknown> = [];
-        const userMessage = session.messages[i];
-        const assistantMessage = session.messages[i + 1];
-        if (userMessage) {
-          items.push({ role: userMessage.role, content: userMessage.content });
-        }
-        if (assistantMessage) {
-          items.push({ role: assistantMessage.role, content: assistantMessage.content });
-        }
+      let cursor = 0;
+      for (const count of session.turnMessageCounts) {
+        const items = session.messages
+          .slice(cursor, cursor + count)
+          .map((message) => ({ role: message.role, content: message.content }));
         turns.push({ id: yield* nextTurnId, items });
+        cursor += count;
       }
 
       return { threadId, turns } as ProviderThreadSnapshot;
@@ -489,9 +1087,16 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
         return yield* new ProviderAdapterSessionNotFoundError({ provider: OPENROUTER, threadId });
       }
 
+      const keptTurnCounts = session.turnMessageCounts.slice(
+        0,
+        Math.max(0, session.turnMessageCounts.length - numTurns),
+      );
+      const keptMessageCount = keptTurnCounts.reduce((sum, count) => sum + count, 0);
+
       sessions.set(threadId, {
         cwd: session.cwd,
-        messages: session.messages.slice(0, -numTurns * 2),
+        messages: session.messages.slice(0, keptMessageCount),
+        turnMessageCounts: keptTurnCounts,
       });
       return { threadId, turns: [] } as ProviderThreadSnapshot;
     });
