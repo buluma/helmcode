@@ -8,6 +8,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   type ToolLifecycleItemType,
   TurnId,
   type UserInputQuestion,
@@ -23,7 +24,13 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  AssistantMessage,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@helmcode/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -221,6 +228,17 @@ interface OpenCodeSessionContext {
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  /**
+   * Cost/token/stop-reason from the active turn's assistant message, stashed
+   * here because OpenCode reports them on `message.updated` while
+   * turn.completed itself fires later, off a separate `session.status`
+   * event. Reset when a new turn starts so a turn that produces no
+   * assistant message (e.g. tool-only) can't inherit the previous turn's
+   * numbers.
+   */
+  lastAssistantUsage:
+    | { totalCostUsd: number; tokenUsage: ThreadTokenUsageSnapshot; stopReason: string | undefined }
+    | undefined;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -499,6 +517,39 @@ function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | und
     default:
       return undefined;
   }
+}
+
+/**
+ * Assistant messages report `cost`/`tokens` as 0 while still streaming and
+ * only fill them in once the message finishes -- so this returns `undefined`
+ * until there's something real to report, keeping partial `message.updated`
+ * events from stashing/emitting a zeroed-out snapshot. `tokens` itself is
+ * typed as required but early/synthetic `message.updated` events (seen in
+ * practice, not just tests) can omit it entirely, so every field is read
+ * defensively rather than trusted from the SDK type.
+ */
+export function openCodeTokenUsageSnapshot(
+  info: AssistantMessage,
+): ThreadTokenUsageSnapshot | undefined {
+  const tokens = info.tokens as Partial<AssistantMessage["tokens"]> | undefined;
+  if (!tokens || typeof tokens !== "object") {
+    return undefined;
+  }
+  const input = typeof tokens.input === "number" ? tokens.input : 0;
+  const output = typeof tokens.output === "number" ? tokens.output : 0;
+  const reasoning = typeof tokens.reasoning === "number" ? tokens.reasoning : 0;
+  const cachedRead = typeof tokens.cache?.read === "number" ? tokens.cache.read : 0;
+  const usedTokens = typeof tokens.total === "number" ? tokens.total : input + output + reasoning;
+  if (usedTokens <= 0) {
+    return undefined;
+  }
+  return {
+    usedTokens,
+    ...(input > 0 ? { inputTokens: input } : {}),
+    ...(output > 0 ? { outputTokens: output } : {}),
+    ...(reasoning > 0 ? { reasoningOutputTokens: reasoning } : {}),
+    ...(cachedRead > 0 ? { cachedInputTokens: cachedRead } : {}),
+  };
 }
 
 function sessionErrorMessage(error: unknown): string {
@@ -837,6 +888,27 @@ export function makeOpenCodeAdapter(
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
+
+            const tokenUsage = openCodeTokenUsageSnapshot(event.properties.info);
+            if (tokenUsage) {
+              context.lastAssistantUsage = {
+                totalCostUsd:
+                  typeof event.properties.info.cost === "number" ? event.properties.info.cost : 0,
+                tokenUsage,
+                stopReason: event.properties.info.finish,
+              };
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "thread.token-usage.updated",
+                payload: {
+                  usage: tokenUsage,
+                },
+              });
+            }
           }
           break;
         }
@@ -1071,6 +1143,12 @@ export function makeOpenCodeAdapter(
               type: "turn.completed",
               payload: {
                 state: "completed",
+                ...(context.lastAssistantUsage?.stopReason !== undefined
+                  ? { stopReason: context.lastAssistantUsage.stopReason }
+                  : {}),
+                ...(context.lastAssistantUsage !== undefined
+                  ? { totalCostUsd: context.lastAssistantUsage.totalCostUsd }
+                  : {}),
               },
             });
           }
@@ -1100,6 +1178,9 @@ export function makeOpenCodeAdapter(
               payload: {
                 state: "failed",
                 errorMessage: message,
+                ...(context.lastAssistantUsage !== undefined
+                  ? { totalCostUsd: context.lastAssistantUsage.totalCostUsd }
+                  : {}),
               },
             });
           }
@@ -1387,6 +1468,7 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          lastAssistantUsage: undefined,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1463,6 +1545,9 @@ export function makeOpenCodeAdapter(
       context.activeTurnId = turnId;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
+      if (steeringTurnId === undefined) {
+        context.lastAssistantUsage = undefined;
+      }
       yield* updateProviderSession(
         context,
         {
