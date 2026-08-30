@@ -1170,6 +1170,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.latestTurnTotalCostUsd !== undefined
             ? { latestTurnTotalCostUsd: command.latestTurnTotalCostUsd }
             : {}),
+          ...(command.latestTurnTokenUsage !== undefined
+            ? { latestTurnTokenUsage: command.latestTurnTokenUsage }
+            : {}),
         },
       };
       // Only a session coming alive is activity worth waking a settled thread

@@ -25,6 +25,7 @@ import {
   ModelSelection,
   ProjectId,
   ThreadId,
+  ThreadTokenUsageSnapshot,
 } from "@helmcode/contracts";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -111,6 +112,7 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   stopReason: Schema.NullOr(Schema.String),
   totalCostUsd: Schema.NullOr(Schema.Number),
+  tokenUsage: Schema.NullOr(Schema.fromJsonString(ThreadTokenUsageSnapshot)),
 });
 const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionCountsRowSchema = Schema.Struct({
@@ -275,6 +277,7 @@ function mapLatestTurn(
     assistantMessageId: row.assistantMessageId,
     stopReason: row.stopReason,
     totalCostUsd: row.totalCostUsd,
+    tokenUsage: row.tokenUsage,
     ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
       ? {
           sourceProposedPlan: {
@@ -689,6 +692,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.assistant_message_id AS "assistantMessageId",
           turns.stop_reason AS "stopReason",
           turns.total_cost_usd AS "totalCostUsd",
+          turns.token_usage_json AS "tokenUsage",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -715,6 +719,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.assistant_message_id AS "assistantMessageId",
           turns.stop_reason AS "stopReason",
           turns.total_cost_usd AS "totalCostUsd",
+          turns.token_usage_json AS "tokenUsage",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -743,6 +748,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.assistant_message_id AS "assistantMessageId",
           turns.stop_reason AS "stopReason",
           turns.total_cost_usd AS "totalCostUsd",
+          turns.token_usage_json AS "tokenUsage",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -1069,6 +1075,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.assistant_message_id AS "assistantMessageId",
           turns.stop_reason AS "stopReason",
           turns.total_cost_usd AS "totalCostUsd",
+          turns.token_usage_json AS "tokenUsage",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads

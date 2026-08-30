@@ -15,6 +15,7 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
   ThreadId,
+  ThreadTokenUsageSnapshot,
   TurnId,
 } from "@helmcode/contracts";
 import * as Option from "effect/Option";
@@ -48,6 +49,9 @@ export const ProjectionTurn = Schema.Struct({
   // null while running, and for turns/providers that never reported one.
   stopReason: Schema.NullOr(Schema.String),
   totalCostUsd: Schema.NullOr(Schema.Number),
+  // The last thread.token-usage.updated snapshot seen before the turn
+  // settled -- not every provider reports one.
+  tokenUsage: Schema.NullOr(ThreadTokenUsageSnapshot),
   checkpointTurnCount: Schema.NullOr(NonNegativeInt),
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
@@ -68,6 +72,7 @@ export const ProjectionTurnById = Schema.Struct({
   completedAt: Schema.NullOr(IsoDateTime),
   stopReason: Schema.NullOr(Schema.String),
   totalCostUsd: Schema.NullOr(Schema.Number),
+  tokenUsage: Schema.NullOr(ThreadTokenUsageSnapshot),
   checkpointTurnCount: Schema.NullOr(NonNegativeInt),
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),

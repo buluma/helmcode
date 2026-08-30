@@ -747,6 +747,56 @@ describe("ProviderRuntimeIngestion", () => {
     }),
   );
 
+  effectIt.effect(
+    "carries the last thread.token-usage.updated snapshot onto a settling latestTurn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = asThreadId("thread-1");
+        const turnId = asTurnId("turn-with-usage");
+
+        // Token usage and turn.completed are reported as two independent
+        // events -- this proves the most recent snapshot survives to land
+        // on latestTurn once the turn settles.
+        harness.emit({
+          type: "turn.started",
+          eventId: asEventId("evt-turn-started-with-usage"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          turnId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        harness.emit({
+          type: "thread.token-usage.updated",
+          eventId: asEventId("evt-token-usage-updated"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          turnId,
+          createdAt: "2026-01-01T00:00:00.500Z",
+          payload: { usage: { usedTokens: 4200, inputTokens: 3000, outputTokens: 1200 } },
+        });
+        harness.emit({
+          type: "turn.completed",
+          eventId: asEventId("evt-turn-completed-with-usage"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId,
+          turnId,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          payload: { state: "completed" },
+        });
+
+        yield* Effect.promise(() => harness.drain());
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.latestTurn?.tokenUsage).toEqual({
+          usedTokens: 4200,
+          inputTokens: 3000,
+          outputTokens: 1200,
+        });
+      }),
+  );
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

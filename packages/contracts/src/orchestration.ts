@@ -22,6 +22,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -358,6 +359,9 @@ export const OrchestrationLatestTurn = Schema.Struct({
   // from pre-cost-tracking servers still decode.
   stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   totalCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
+  // The last thread.token-usage.updated snapshot seen before the turn
+  // settled -- not every provider reports one (only Claude/Codex do today).
+  tokenUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)),
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
@@ -966,6 +970,7 @@ const ThreadSessionSetCommand = Schema.Struct({
   // only when this command is the one settling it.
   latestTurnStopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   latestTurnTotalCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
+  latestTurnTokenUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)),
   createdAt: IsoDateTime,
 });
 
@@ -1295,6 +1300,7 @@ export const ThreadSessionSetPayload = Schema.Struct({
   session: OrchestrationSession,
   latestTurnStopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   latestTurnTotalCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
+  latestTurnTokenUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)),
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
