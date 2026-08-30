@@ -299,7 +299,10 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
-            yield* Effect.logError("NVIDIA adapter turn failed", { cause });
+            // The pino JSON logger serializes a raw Cause as an opaque
+            // { _id: 'Cause', failures: [Object] } blob -- Cause.pretty
+            // renders the actual error chain into readable text.
+            yield* Effect.logError("NVIDIA adapter turn failed", { cause: Cause.pretty(cause) });
             yield* publish({
               eventId: yield* nextEventId,
               provider: NVIDIA,
