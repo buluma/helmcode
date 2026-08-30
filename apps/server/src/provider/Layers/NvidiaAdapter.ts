@@ -38,6 +38,7 @@ import {
   ThreadId,
   TurnId,
 } from "@helmcode/contracts";
+import { isHostWindows } from "@helmcode/shared/hostProcess";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
@@ -571,9 +572,12 @@ interface WorkspaceCommandResult {
  * decision before this ever runs. Output is capped and the process is
  * killed on timeout so one runaway command can't hang or flood a turn.
  */
-const runShellCommand = (cwd: string, command: string): Effect.Effect<WorkspaceCommandResult> =>
+const runShellCommand = (
+  cwd: string,
+  command: string,
+  isWindows: boolean,
+): Effect.Effect<WorkspaceCommandResult> =>
   Effect.callback<WorkspaceCommandResult>((resume) => {
-    const isWindows = process.platform === "win32";
     const child = NodeChildProcess.spawn(
       isWindows ? "cmd.exe" : "/bin/sh",
       isWindows ? ["/d", "/s", "/c", command] : ["-c", command],
@@ -626,7 +630,8 @@ const runWorkspaceCommandTool = (
       return "Error: 'command' is required.";
     }
 
-    const result = yield* runShellCommand(cwd, command);
+    const isWindows = yield* isHostWindows;
+    const result = yield* runShellCommand(cwd, command, isWindows);
     const cap = (text: string): string =>
       text.length > WORKSPACE_COMMAND_MAX_OUTPUT_BYTES
         ? `${text.slice(0, WORKSPACE_COMMAND_MAX_OUTPUT_BYTES)}\n... (truncated)`
