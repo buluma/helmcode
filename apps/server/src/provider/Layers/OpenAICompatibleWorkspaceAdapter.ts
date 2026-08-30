@@ -31,6 +31,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as PubSub from "effect/PubSub";
@@ -845,6 +846,12 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
   }) {
     const sessions = new Map<ThreadId, Session>();
     const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+    // The detached fiber sendTurn forks to run a turn in the background --
+    // tracked so interruptTurn/stopSession/stopAll can actually stop it,
+    // instead of only clearing bookkeeping while the HTTP call and tool loop
+    // keep running and eventually resurrect the session they were told to
+    // tear down.
+    const runningTurnFibers = new Map<ThreadId, Fiber.Fiber<void, ProviderAdapterRequestError>>();
 
     const events = yield* PubSub.bounded<ProviderRuntimeEvent>(
       PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
@@ -970,58 +977,74 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
           HttpClientRequest.bodyText(bodyText, "application/json"),
         );
 
-        const response = yield* httpClient.execute(request).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "chat.completions",
-                detail: `Failed to reach ${LABEL}.`,
-                cause,
-              }),
-          ),
-        );
-
-        if (response.status !== 200) {
-          const text = yield* response.text.pipe(
+        // A gateway that never answers (no error, no response) would
+        // otherwise hang this turn's fiber forever -- bounded here so a dead
+        // upstream surfaces as a retryable transient failure instead.
+        const responseText = yield* Effect.gen(function* () {
+          const response = yield* httpClient.execute(request).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterRequestError({
                   provider: PROVIDER,
                   method: "chat.completions",
-                  detail: `Failed to read error response body: ${cause}`,
+                  detail: `Failed to reach ${LABEL}.`,
                   cause,
                 }),
             ),
           );
-          const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
-          if (response.status >= 500 || response.status === 429) {
-            return yield* new TransientHttpError({ status: response.status, detail });
-          }
-          // Not every model available through this gateway supports function
-          // calling, and there's no reliable capability list to check up
-          // front -- a 400 that only shows up when `tools` was sent is the
-          // signal to retry once without it rather than fail the whole turn.
-          if (payload.tools && response.status === 400) {
-            return yield* new ToolsUnsupportedError({ detail });
-          }
-          return yield* new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "chat.completions",
-            detail,
-            cause: new Error(`HTTP ${response.status}`),
-          });
-        }
 
-        const responseText = yield* response.text.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "chat.completions",
-                detail: `Failed to read response body: ${cause}`,
-                cause,
+          if (response.status !== 200) {
+            const text = yield* response.text.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "chat.completions",
+                    detail: `Failed to read error response body: ${cause}`,
+                    cause,
+                  }),
+              ),
+            );
+            const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
+            if (response.status >= 500 || response.status === 429) {
+              return yield* new TransientHttpError({ status: response.status, detail });
+            }
+            // Not every model available through this gateway supports
+            // function calling, and there's no reliable capability list to
+            // check up front -- a 400 that only shows up when `tools` was
+            // sent is the signal to retry once without it rather than fail
+            // the whole turn.
+            if (payload.tools && response.status === 400) {
+              return yield* new ToolsUnsupportedError({ detail });
+            }
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "chat.completions",
+              detail,
+              cause: new Error(`HTTP ${response.status}`),
+            });
+          }
+
+          return yield* response.text.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "chat.completions",
+                  detail: `Failed to read response body: ${cause}`,
+                  cause,
+                }),
+            ),
+          );
+        }).pipe(
+          Effect.timeout("120 seconds"),
+          Effect.catchTag("TimeoutError", () =>
+            Effect.fail(
+              new TransientHttpError({
+                status: 504,
+                detail: `${LABEL} did not respond within 120 seconds.`,
               }),
+            ),
           ),
         );
 
@@ -1247,6 +1270,14 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (turnInput) =>
       Effect.gen(function* () {
         const turnId = yield* nextTurnId;
+        // Filled in once Effect.forkDetach below returns -- used by this
+        // turn's own cleanup to avoid deleting a newer turn's registration
+        // for the same thread (steering superseded this one and moved on).
+        const selfFiberRef: {
+          current: Fiber.Fiber<void, ProviderAdapterRequestError> | undefined;
+        } = {
+          current: undefined,
+        };
 
         const work = Effect.gen(function* () {
           const session = sessions.get(turnInput.threadId);
@@ -1288,16 +1319,21 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
             turnId,
           });
 
-          sessions.set(turnInput.threadId, {
-            cwd: session.cwd,
-            runtimeMode: session.runtimeMode,
-            messages: [...session.messages, ...appendedMessages],
-            turnMessageCounts: [...session.turnMessageCounts, appendedMessages.length],
-            // Same Set reference as `session` -- requestApprovalIfNeeded may
-            // have mutated it in place while the loop ran, and that has to
-            // survive into the session record replacing `session` here.
-            autoAcceptedRequestTypes: session.autoAcceptedRequestTypes,
-          });
+          // An interruptTurn/stopSession/stopAll that raced with this turn
+          // already deleted the session -- writing it back here would
+          // resurrect a session the caller explicitly tore down.
+          if (sessions.has(turnInput.threadId)) {
+            sessions.set(turnInput.threadId, {
+              cwd: session.cwd,
+              runtimeMode: session.runtimeMode,
+              messages: [...session.messages, ...appendedMessages],
+              turnMessageCounts: [...session.turnMessageCounts, appendedMessages.length],
+              // Same Set reference as `session` -- requestApprovalIfNeeded may
+              // have mutated it in place while the loop ran, and that has to
+              // survive into the session record replacing `session` here.
+              autoAcceptedRequestTypes: session.autoAcceptedRequestTypes,
+            });
+          }
 
           yield* publish({
             eventId: yield* nextEventId,
@@ -1362,6 +1398,17 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
               });
             }),
           ),
+          // Drop this turn's own fiber registration once it finishes on its
+          // own -- but only if nothing newer replaced it first (steering
+          // starts a new turn on the same thread without this one ever
+          // completing).
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (runningTurnFibers.get(turnInput.threadId) === selfFiberRef.current) {
+                runningTurnFibers.delete(turnInput.threadId);
+              }
+            }),
+          ),
         );
 
         // The caller (ProviderCommandReactor) runs sendTurn inside a
@@ -1369,8 +1416,13 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
         // function returns. Effect.forkChild ties the forked fiber's lifetime
         // to that parent fiber, so `work` would be interrupted before it ever
         // reaches the HTTP call. Effect.forkDetach attaches it to the global
-        // scope instead, so it survives past sendTurn's own return.
-        yield* Effect.forkDetach(work);
+        // scope instead, so it survives past sendTurn's own return. Tracked
+        // by thread so interruptTurn/stopSession/stopAll can actually
+        // interrupt it -- a new turn superseding an old one on the same
+        // thread is expected (steering), so this just overwrites.
+        const fiber = yield* Effect.forkDetach(work);
+        selfFiberRef.current = fiber;
+        runningTurnFibers.set(turnInput.threadId, fiber);
 
         return { threadId: turnInput.threadId, turnId };
       });
@@ -1391,11 +1443,29 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
         }
       });
 
+    /**
+     * Interrupts `threadId`'s in-flight sendTurn fiber, if one is still
+     * running. Without this, interruptTurn/stopSession/stopAll only cleared
+     * bookkeeping -- the HTTP call and tool loop kept running in the
+     * background and eventually resurrected the session they were told to
+     * tear down.
+     */
+    const interruptRunningTurnFiber = (threadId: ThreadId): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const fiber = runningTurnFibers.get(threadId);
+        if (!fiber) {
+          return;
+        }
+        runningTurnFibers.delete(threadId);
+        yield* Fiber.interrupt(fiber);
+      });
+
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       _threadId: ThreadId,
       _turnId?: TurnId,
     ) =>
       Effect.gen(function* () {
+        yield* interruptRunningTurnFiber(_threadId);
         sessions.delete(_threadId);
         yield* cancelPendingApprovalsForThread(_threadId);
       });
@@ -1437,6 +1507,7 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
       threadId: ThreadId,
     ) =>
       Effect.gen(function* () {
+        yield* interruptRunningTurnFiber(threadId);
         sessions.delete(threadId);
         yield* cancelPendingApprovalsForThread(threadId);
       });
@@ -1447,16 +1518,16 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
         const result: Array<{
           provider: typeof PROVIDER;
           status: "ready";
-          runtimeMode: "auto";
+          runtimeMode: RuntimeMode;
           threadId: ThreadId;
           createdAt: string;
           updatedAt: string;
         }> = [];
-        for (const [threadId] of sessions) {
+        for (const [threadId, session] of sessions) {
           result.push({
             provider: PROVIDER,
             status: "ready",
-            runtimeMode: "auto",
+            runtimeMode: session.runtimeMode,
             threadId,
             createdAt,
             updatedAt: createdAt,
@@ -1506,19 +1577,35 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
           Math.max(0, session.turnMessageCounts.length - numTurns),
         );
         const keptMessageCount = keptTurnCounts.reduce((sum, count) => sum + count, 0);
+        const keptMessages = session.messages.slice(0, keptMessageCount);
 
         sessions.set(threadId, {
           cwd: session.cwd,
           runtimeMode: session.runtimeMode,
-          messages: session.messages.slice(0, keptMessageCount),
+          messages: keptMessages,
           turnMessageCounts: keptTurnCounts,
           autoAcceptedRequestTypes: session.autoAcceptedRequestTypes,
         });
-        return { threadId, turns: [] } as ProviderThreadSnapshot;
+
+        const turns: Array<ProviderThreadTurnSnapshot> = [];
+        let cursor = 0;
+        for (const count of keptTurnCounts) {
+          const items = keptMessages
+            .slice(cursor, cursor + count)
+            .map((message) => ({ role: message.role, content: message.content }));
+          turns.push({ id: yield* nextTurnId, items });
+          cursor += count;
+        }
+
+        return { threadId, turns } as ProviderThreadSnapshot;
       });
 
     const stopAll: ProviderAdapterShape<ProviderAdapterError>["stopAll"] = () =>
       Effect.gen(function* () {
+        for (const [threadId, fiber] of runningTurnFibers) {
+          runningTurnFibers.delete(threadId);
+          yield* Fiber.interrupt(fiber);
+        }
         sessions.clear();
         for (const [requestId, pending] of pendingApprovals) {
           pendingApprovals.delete(requestId);

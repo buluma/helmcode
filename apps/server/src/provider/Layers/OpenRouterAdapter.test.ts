@@ -94,6 +94,26 @@ const makeTestAdapter = () =>
     defaultModel: "anthropic/claude-sonnet-4.5",
   });
 
+// Blocks the chat-completions call until `gate` resolves, then answers with
+// `content`. Used to prove a turn's fiber actually gets interrupted (vs.
+// only clearing bookkeeping while the call keeps running in the background).
+const hangingUntilGateHttpLayer = (gate: Deferred.Deferred<void>, content: string) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.gen(function* () {
+        yield* Deferred.await(gate);
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(encodeJsonString(chatCompletion(content)), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }),
+    ),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
 it.effect("starts a session and completes a turn against a mocked chat completion", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("openrouter-happy-path");
@@ -289,6 +309,67 @@ it.effect("retries a 429 and succeeds once OpenRouter stops rate-limiting", () =
   }),
 );
 
+it.effect("retries a request that never got a response as a transient failure", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("openrouter-hung-request");
+    let attempts = 0;
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            attempts += 1;
+            // First attempt never resolves -- a dead gateway that neither
+            // errors nor answers -- second attempt (the retry) succeeds.
+            return attempts === 1
+              ? Effect.never
+              : Effect.sync(() =>
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(encodeJsonString(chatCompletion("finally got through")), {
+                      status: 200,
+                      headers: { "content-type": "application/json" },
+                    }),
+                  ),
+                );
+          }),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+    // Past the 120s per-attempt timeout, plus the retry schedule's first
+    // backoff -- advance the virtual clock instead of waiting in real time.
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(Duration.seconds(121));
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(attempts, 2);
+    assert.isUndefined(runtimeEvents.find((event) => event.type === "session.exited"));
+  }),
+);
+
 it.effect("publishes session.exited when the model returns an empty response", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("openrouter-empty-response");
@@ -382,6 +463,26 @@ it.effect(
     }),
 );
 
+it.effect("listSessions reports the runtimeMode a session was actually started with", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("openrouter-list-sessions-runtime-mode");
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(testLayer(() => ({ body: chatCompletion("unused") }))),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "approval-required",
+    });
+
+    const sessions = yield* adapter.listSessions();
+    const session = sessions.find((entry) => entry.threadId === threadId);
+    assert.isDefined(session);
+    assert.equal(session?.runtimeMode, "approval-required");
+  }),
+);
+
 it.effect("interruptTurn drops the in-memory session for its thread", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("openrouter-interrupt");
@@ -398,6 +499,50 @@ it.effect("interruptTurn drops the in-memory session for its thread", () =>
 
     yield* adapter.interruptTurn(threadId, TurnId.make("turn-1"));
     assert.isFalse(yield* adapter.hasSession(threadId));
+  }),
+);
+
+it.effect("interruptTurn actually stops the in-flight turn, not just its bookkeeping", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("openrouter-interrupt-in-flight");
+    const gate = yield* Deferred.make<void>();
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(hangingUntilGateHttpLayer(gate, "should never be seen")),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+    // Let the forked turn fiber actually reach the (hanging) HTTP call
+    // before interrupting it.
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+
+    yield* adapter.interruptTurn(threadId, TurnId.make("turn-1"));
+    assert.isFalse(yield* adapter.hasSession(threadId));
+
+    // If the turn's fiber wasn't actually interrupted, releasing the gate
+    // now would let it run to completion and publish turn.completed --
+    // and, absent the sendTurn write guard, resurrect the session.
+    yield* Deferred.succeed(gate, undefined);
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.isFalse(yield* adapter.hasSession(threadId));
+    assert.isUndefined(runtimeEvents.find((event) => event.type === "turn.completed"));
   }),
 );
 
@@ -446,6 +591,49 @@ it.effect("rollbackThread removes the trailing turn's messages", () =>
 
     const readAfter = yield* adapter.readThread(threadId);
     assert.equal(readAfter.turns.length, 0);
+  }),
+);
+
+it.effect("rollbackThread returns the turns still present after a partial rollback", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("openrouter-rollback-partial");
+    let replyCount = 0;
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer(() => {
+          replyCount += 1;
+          return { body: chatCompletion(`reply ${replyCount}`) };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("openrouter"),
+      runtimeMode: "full-access",
+    });
+
+    for (const input of ["first message", "second message"]) {
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "turn.completed" ? Deferred.succeed(turnCompleted, undefined) : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* adapter.sendTurn({ threadId, input });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+    }
+
+    const beforeRollback = yield* adapter.readThread(threadId);
+    assert.equal(beforeRollback.turns.length, 2);
+
+    // Dropping the trailing turn must leave the first one's actual content
+    // behind -- not an empty array regardless of what's left.
+    const afterRollback = yield* adapter.rollbackThread(threadId, 1);
+    assert.equal(afterRollback.turns.length, 1);
+    assert.deepEqual(afterRollback.turns[0]!.items, [
+      { role: "user", content: "first message" },
+      { role: "assistant", content: "reply 1" },
+    ]);
   }),
 );
 
