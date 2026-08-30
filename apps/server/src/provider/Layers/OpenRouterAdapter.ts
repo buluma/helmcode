@@ -44,6 +44,37 @@ interface ChatToolCall {
 }
 
 /**
+ * Narrows an API response's `tool_calls` field to well-formed entries only.
+ * The API response is untyped JSON -- a model or a proxy in front of it can
+ * return a tool_call missing `function`/`arguments`, and every downstream
+ * consumer (the tool-call loop, argument summaries) assumes those fields
+ * exist. A malformed entry is dropped rather than crashing the turn.
+ */
+function sanitizeToolCalls(value: unknown): Array<ChatToolCall> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: Array<ChatToolCall> = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const id = (entry as Record<string, unknown>).id;
+    const fn = (entry as Record<string, unknown>).function;
+    if (typeof id !== "string" || !fn || typeof fn !== "object") {
+      continue;
+    }
+    const name = (fn as Record<string, unknown>).name;
+    const args = (fn as Record<string, unknown>).arguments;
+    if (typeof name !== "string" || typeof args !== "string") {
+      continue;
+    }
+    result.push({ id, type: "function", function: { name, arguments: args } });
+  }
+  return result;
+}
+
+/**
  * OpenAI-compatible chat message shapes. `assistant` carries `tool_calls`
  * when the model wants a tool run instead of answering; `tool` carries the
  * result back, keyed by `tool_call_id` to the call it answers.
@@ -75,6 +106,12 @@ const sessions = new Map<ThreadId, Session>();
 // unsupported -- there's nothing here that needs a human decision.
 const WORKSPACE_TOOL_MAX_FILE_BYTES = 256 * 1024;
 const WORKSPACE_TOOL_MAX_ENTRIES = 500;
+// Bounds the directory walk itself (files + directories visited), separate
+// from WORKSPACE_TOOL_MAX_ENTRIES/MAX_MATCHES, which only cap what gets
+// returned after the walk. Without this, listing or searching a huge tree
+// (or one where an excluded directory wasn't actually excluded) did
+// unbounded work before ever applying those caps.
+const WORKSPACE_TOOL_MAX_SCAN_ENTRIES = 2000;
 const WORKSPACE_TOOL_MAX_MATCHES = 200;
 const WORKSPACE_TOOL_EXCLUDED_DIR_NAMES = new Set([
   "node_modules",
@@ -188,6 +225,89 @@ function isExcludedWorkspaceSegment(segment: string): boolean {
   return WORKSPACE_TOOL_EXCLUDED_DIR_NAMES.has(segment);
 }
 
+interface WorkspaceWalkEntry {
+  readonly relativePath: string;
+  readonly absolutePath: string;
+  readonly type: FileSystem.File.Info["type"];
+}
+
+/**
+ * Breadth-first walk of `root`, bounded and symlink-safe. Two things a plain
+ * `fs.readDirectory(root, { recursive: true })` doesn't give us:
+ *
+ * - Excluded directories (node_modules, .git, ...) are skipped before ever
+ *   descending into them, not filtered out of the full listing afterward --
+ *   the earlier version walked the whole excluded subtree first and threw
+ *   the result away.
+ * - Every entry's realpath is checked against `realRoot` before it's
+ *   trusted, so a symlink anywhere in the tree that points outside `root`
+ *   (not just at `root` itself) can't be read through.
+ *
+ * Stops after `maxEntries` regardless of how much of the tree remains, so a
+ * huge or pathological directory can't turn one tool call into an unbounded
+ * scan.
+ */
+const walkWorkspaceEntries = (
+  fs: FileSystem.FileSystem,
+  root: string,
+  realRoot: string,
+  options: { readonly recursive: boolean; readonly maxEntries: number },
+): Effect.Effect<{
+  readonly entries: ReadonlyArray<WorkspaceWalkEntry>;
+  readonly truncated: boolean;
+}> =>
+  Effect.gen(function* () {
+    const results: Array<WorkspaceWalkEntry> = [];
+    const queue: Array<string> = [""];
+    let truncated = false;
+
+    while (queue.length > 0) {
+      const relDir = queue.shift()!;
+      const dirPath = relDir.length > 0 ? NodePath.join(root, relDir) : root;
+      const names = yield* fs.readDirectory(dirPath).pipe(Effect.result);
+      if (names._tag === "Failure") {
+        continue;
+      }
+
+      for (const name of names.success) {
+        if (results.length >= options.maxEntries) {
+          truncated = true;
+          break;
+        }
+        if (isExcludedWorkspaceSegment(name)) {
+          continue;
+        }
+
+        const relativePath = relDir.length > 0 ? `${relDir}/${name}` : name;
+        const absolutePath = NodePath.join(root, relativePath);
+
+        const real = yield* fs.realPath(absolutePath).pipe(Effect.result);
+        if (real._tag === "Failure") {
+          continue;
+        }
+        if (real.success !== realRoot && !real.success.startsWith(`${realRoot}${NodePath.sep}`)) {
+          continue;
+        }
+
+        const stat = yield* fs.stat(absolutePath).pipe(Effect.result);
+        if (stat._tag === "Failure") {
+          continue;
+        }
+
+        results.push({ relativePath, absolutePath, type: stat.success.type });
+        if (options.recursive && stat.success.type === "Directory") {
+          queue.push(relativePath);
+        }
+      }
+
+      if (truncated) {
+        break;
+      }
+    }
+
+    return { entries: results, truncated };
+  });
+
 const readWorkspaceFileTool = (
   fs: FileSystem.FileSystem,
   cwd: string,
@@ -223,6 +343,21 @@ const readWorkspaceFileTool = (
     return `${truncated}\n... (truncated at ${WORKSPACE_TOOL_MAX_FILE_BYTES} bytes)`;
   });
 
+/**
+ * Resolves `resolved` to its realpath for use as the walk's containment
+ * root. Distinct from resolveWorkspacePath's own realpath check (which only
+ * verifies `resolved` itself doesn't escape `cwd`) -- this is the value
+ * every entry found during the walk gets compared against.
+ */
+const realWorkspaceRoot = (
+  fs: FileSystem.FileSystem,
+  resolved: string,
+): Effect.Effect<string | null> =>
+  fs.realPath(resolved).pipe(
+    Effect.result,
+    Effect.map((result) => (result._tag === "Success" ? result.success : null)),
+  );
+
 const listWorkspaceDirectoryTool = (
   fs: FileSystem.FileSystem,
   cwd: string,
@@ -235,16 +370,17 @@ const listWorkspaceDirectoryTool = (
     if (!resolved) {
       return `Error: path '${rawPath}' is outside the project root.`;
     }
-    const entries = yield* fs.readDirectory(resolved, { recursive }).pipe(Effect.result);
-    if (entries._tag === "Failure") {
-      return `Error: could not list '${rawPath}': ${entries.failure.message}`;
+    const realRoot = yield* realWorkspaceRoot(fs, resolved);
+    if (!realRoot) {
+      return `Error: could not resolve '${rawPath}'.`;
     }
-    const filtered = entries.success.filter(
-      (entry) => !entry.split(/[/\\]/).some(isExcludedWorkspaceSegment),
-    );
-    const truncated = filtered.length > WORKSPACE_TOOL_MAX_ENTRIES;
-    const shown = filtered.slice(0, WORKSPACE_TOOL_MAX_ENTRIES);
-    const listing = shown.length > 0 ? shown.join("\n") : "(empty)";
+
+    const { entries, truncated } = yield* walkWorkspaceEntries(fs, resolved, realRoot, {
+      recursive,
+      maxEntries: Math.min(WORKSPACE_TOOL_MAX_ENTRIES, WORKSPACE_TOOL_MAX_SCAN_ENTRIES),
+    });
+    const listing =
+      entries.length > 0 ? entries.map((entry) => entry.relativePath).join("\n") : "(empty)";
     return truncated
       ? `${listing}\n... (truncated at ${WORKSPACE_TOOL_MAX_ENTRIES} entries)`
       : listing;
@@ -265,26 +401,30 @@ const searchWorkspaceTextTool = (
     if (!root) {
       return `Error: path '${rawPath}' is outside the project root.`;
     }
-    const entries = yield* fs.readDirectory(root, { recursive: true }).pipe(Effect.result);
-    if (entries._tag === "Failure") {
-      return `Error: could not search '${rawPath}': ${entries.failure.message}`;
+    const realRoot = yield* realWorkspaceRoot(fs, root);
+    if (!realRoot) {
+      return `Error: could not resolve '${rawPath}'.`;
     }
+
+    const { entries } = yield* walkWorkspaceEntries(fs, root, realRoot, {
+      recursive: true,
+      maxEntries: WORKSPACE_TOOL_MAX_SCAN_ENTRIES,
+    });
 
     const needle = query.toLowerCase();
     const matches: Array<string> = [];
-    for (const entry of entries.success) {
+    for (const entry of entries) {
       if (matches.length >= WORKSPACE_TOOL_MAX_MATCHES) {
         break;
       }
-      if (entry.split(/[/\\]/).some(isExcludedWorkspaceSegment)) {
+      if (entry.type !== "File") {
         continue;
       }
-      const entryPath = NodePath.join(root, entry);
-      const stat = yield* fs.stat(entryPath).pipe(Effect.result);
-      if (stat._tag === "Failure" || stat.success.type !== "File") {
+      const stat = yield* fs.stat(entry.absolutePath).pipe(Effect.result);
+      if (stat._tag === "Failure" || stat.success.size > BigInt(WORKSPACE_TOOL_MAX_FILE_BYTES)) {
         continue;
       }
-      const content = yield* fs.readFileString(entryPath).pipe(Effect.result);
+      const content = yield* fs.readFileString(entry.absolutePath).pipe(Effect.result);
       if (content._tag === "Failure") {
         continue;
       }
@@ -296,7 +436,7 @@ const searchWorkspaceTextTool = (
       const lines = content.success.split("\n");
       for (let i = 0; i < lines.length && matches.length < WORKSPACE_TOOL_MAX_MATCHES; i++) {
         if (lines[i]!.toLowerCase().includes(needle)) {
-          matches.push(`${entry}:${i + 1}: ${lines[i]!.trim().slice(0, 300)}`);
+          matches.push(`${entry.relativePath}:${i + 1}: ${lines[i]!.trim().slice(0, 300)}`);
         }
       }
     }
@@ -537,9 +677,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       const choices = (parsed.choices as Array<Record<string, unknown>> | undefined) ?? [];
       const message = choices[0]?.message as Record<string, unknown> | undefined;
       const content = typeof message?.content === "string" ? message.content : null;
-      const toolCalls = Array.isArray(message?.tool_calls)
-        ? (message.tool_calls as Array<ChatToolCall>)
-        : [];
+      const toolCalls = sanitizeToolCalls(message?.tool_calls);
       if ((!content || content.trim().length === 0) && toolCalls.length === 0) {
         return yield* new ProviderAdapterRequestError({
           provider: OPENROUTER,

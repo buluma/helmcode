@@ -615,3 +615,121 @@ it.effect("falls back to no tools when the model rejects the tools field", () =>
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("does not follow a symlink that escapes the project root during search_text", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+    const outsideDir = yield* fs.makeTempDirectoryScoped();
+    yield* fs.writeFileString(`${outsideDir}/secret.txt`, "top secret leak marker");
+    yield* fs.symlink(`${outsideDir}/secret.txt`, `${cwd}/innocuous-link.txt`);
+
+    const threadId = ThreadId.make("nvidia-symlink-escape");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  { id: "call_1", name: "search_text", args: { query: "top secret" } },
+                ]),
+              }
+            : { body: chatCompletion("no leak") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      event.type === "turn.completed" ? Deferred.succeed(turnCompleted, undefined) : Effect.void,
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "search for the leak" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.equal(requests.length, 2);
+    const secondRoundMessages = requests[1]!.body.messages as Array<Record<string, unknown>>;
+    const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
+    assert.isDefined(toolResultMessage);
+    assert.notInclude(toolResultMessage?.content as string, "top secret leak marker");
+    assert.equal(toolResultMessage?.content, "No matches found.");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ignores a malformed tool_call instead of crashing the turn", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("nvidia-malformed-tool-call");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return {
+            body: {
+              choices: [
+                {
+                  message: {
+                    role: "assistant",
+                    content: "answered anyway",
+                    // Missing `function` entirely -- a real model/proxy bug,
+                    // not something the adapter should ever construct itself.
+                    tool_calls: [{ id: "call_1" }],
+                  },
+                },
+              ],
+            },
+          };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "hello" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    // The malformed tool_call is dropped, leaving no valid tool calls, so
+    // the turn treats the response's content as the final answer in a
+    // single round rather than crashing.
+    assert.equal(requests.length, 1);
+    const finalContent = runtimeEvents.find((event) => event.type === "content.delta");
+    if (finalContent?.type === "content.delta") {
+      assert.equal(finalContent.payload.delta, "answered anyway");
+    } else {
+      assert.fail("expected a content.delta event");
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
