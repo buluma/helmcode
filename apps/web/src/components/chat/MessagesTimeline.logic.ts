@@ -157,7 +157,7 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestTurn = Pick<
   OrchestrationLatestTurn,
-  "turnId" | "state" | "startedAt" | "completedAt"
+  "turnId" | "state" | "startedAt" | "completedAt" | "totalCostUsd" | "tokenUsage"
 >;
 
 export type MessagesTimelineRow =

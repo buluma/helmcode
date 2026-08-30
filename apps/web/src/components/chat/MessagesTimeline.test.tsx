@@ -299,6 +299,81 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
+  it("shows cost and token usage after the timestamp for the latest turn's message", () => {
+    const assistantMessageId = MessageId.make("message-assistant-with-usage");
+    const turnId = TurnId.make("turn-with-usage");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: MESSAGE_CREATED_AT,
+          totalCostUsd: 0.0042,
+          tokenUsage: { usedTokens: 4200 },
+        }}
+        timelineEntries={[
+          {
+            id: "entry-assistant-with-usage",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Done.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("$0.0042");
+    expect(markup).toContain("4.20K tokens");
+  });
+
+  it("does not show cost/usage for a message from an older, superseded turn", () => {
+    const assistantMessageId = MessageId.make("message-assistant-old-turn");
+    const oldTurnId = TurnId.make("turn-old");
+    const latestTurnId = TurnId.make("turn-latest");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId: latestTurnId,
+          state: "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: MESSAGE_CREATED_AT,
+          totalCostUsd: 0.0042,
+          tokenUsage: { usedTokens: 4200 },
+        }}
+        timelineEntries={[
+          {
+            id: "entry-assistant-old-turn",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "From an earlier turn.",
+              turnId: oldTurnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("$0.0042");
+    expect(markup).not.toContain("4.20K tokens");
+  });
+
   it("treats only the strict list end as the live edge", async () => {
     const {
       resolveTimelineIsAtEnd,
