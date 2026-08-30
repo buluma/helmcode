@@ -936,8 +936,13 @@ const make = Effect.gen(function* () {
 
   // Last thread.token-usage.updated snapshot per thread, so a settling turn
   // can attach whatever was most recently known even though the two events
-  // arrive independently.
-  const latestTokenUsageByThread = yield* Cache.make<ThreadId, ThreadTokenUsageSnapshot | null>({
+  // arrive independently. Tagged with the turn it was reported for so a
+  // snapshot left over from a prior turn can't attach to one that never
+  // reported its own usage.
+  const latestTokenUsageByThread = yield* Cache.make<
+    ThreadId,
+    { turnId: TurnId | undefined; usage: ThreadTokenUsageSnapshot } | null
+  >({
     capacity: LATEST_TOKEN_USAGE_BY_THREAD_CACHE_CAPACITY,
     timeToLive: LATEST_TOKEN_USAGE_BY_THREAD_TTL,
     lookup: () => Effect.succeed(null),
@@ -1507,7 +1512,10 @@ const make = Effect.gen(function* () {
       // and turn.completed are reported as two separate, independently
       // timed runtime events.
       if (event.type === "thread.token-usage.updated") {
-        yield* Cache.set(latestTokenUsageByThread, thread.id, event.payload.usage);
+        yield* Cache.set(latestTokenUsageByThread, thread.id, {
+          turnId: toTurnId(event.turnId),
+          usage: event.payload.usage,
+        });
       }
 
       let loadedThreadDetail: OrchestrationThread | null | undefined;
@@ -1658,10 +1666,23 @@ const make = Effect.gen(function* () {
             );
           }
 
-          const latestTokenUsage =
+          const cachedTokenUsage =
             event.type === "turn.completed"
               ? yield* Cache.get(latestTokenUsageByThread, thread.id)
               : null;
+          // Only attach a snapshot reported for this same turn -- one left
+          // over from a prior turn (or with no turn id at all) must not be
+          // shown as this turn's usage.
+          const latestTokenUsage =
+            cachedTokenUsage !== null &&
+            eventTurnId !== undefined &&
+            cachedTokenUsage.turnId !== undefined &&
+            sameId(cachedTokenUsage.turnId, eventTurnId)
+              ? cachedTokenUsage.usage
+              : null;
+          if (event.type === "turn.completed") {
+            yield* Cache.set(latestTokenUsageByThread, thread.id, null);
+          }
 
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",

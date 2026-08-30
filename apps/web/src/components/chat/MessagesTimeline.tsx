@@ -19,7 +19,10 @@ const NOOP_OPEN_AGENTS = () => {};
 // page's convention) would round everything under a cent down to "$0.00".
 function formatTurnCostUsd(value: number): string {
   if (value === 0) return "$0.00";
-  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+  if (value < 0.01) {
+    return value < 0.0001 ? "<$0.0001" : `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
 }
 import { resolveChatListAnchoredEndSpace } from "@helmcode/shared/chatList";
 import {
