@@ -14,6 +14,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   ApprovalRequestId,
   ProviderDriverKind,
+  type RuntimeRequestId,
   ThreadId,
   TurnId,
   type ProviderRuntimeEvent,
@@ -731,5 +732,361 @@ it.effect("ignores a malformed tool_call instead of crashing the turn", () =>
     } else {
       assert.fail("expected a content.delta event");
     }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("writes a file without asking when the session is full-access", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("nvidia-write-full-access");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  {
+                    id: "call_1",
+                    name: "write_file",
+                    args: { path: "notes.txt", content: "written by the model" },
+                  },
+                ]),
+              }
+            : { body: chatCompletion("done") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "full-access",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "write notes.txt" });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    assert.isUndefined(runtimeEvents.find((event) => event.type === "request.opened"));
+    const written = yield* fs.readFileString(`${cwd}/notes.txt`);
+    assert.equal(written, "written by the model");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("asks for approval before running a command, and executes it once accepted", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("nvidia-command-approval");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  { id: "call_1", name: "run_command", args: { command: "echo hi" } },
+                ]),
+              }
+            : { body: chatCompletion("ran it") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "approval-required",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const requestOpened = yield* Deferred.make<RuntimeRequestId>();
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "request.opened" && event.requestId
+            ? Deferred.succeed(requestOpened, event.requestId)
+            : Effect.void,
+        ),
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "run echo hi" });
+    const requestId = yield* Deferred.await(requestOpened);
+
+    // The command tool hasn't run yet -- the turn is parked awaiting a
+    // decision, and command_execution_approval is the request type asked
+    // for (never file_change_approval, which run_command isn't).
+    const opened = runtimeEvents.find((event) => event.type === "request.opened");
+    if (opened?.type === "request.opened") {
+      assert.equal(opened.payload.requestType, "command_execution_approval");
+    } else {
+      assert.fail("expected a request.opened event");
+    }
+
+    yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "accept");
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    const resolved = runtimeEvents.find((event) => event.type === "request.resolved");
+    if (resolved?.type === "request.resolved") {
+      assert.equal(resolved.payload.decision, "accept");
+    } else {
+      assert.fail("expected a request.resolved event");
+    }
+    const secondRoundMessages = requests[1]!.body.messages as Array<Record<string, unknown>>;
+    const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
+    assert.include(toolResultMessage?.content as string, "hi");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("skips the tool and tells the model when the user declines", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("nvidia-command-declined");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return requests.length === 1
+            ? {
+                body: toolCallCompletion([
+                  { id: "call_1", name: "run_command", args: { command: "rm -rf /" } },
+                ]),
+              }
+            : { body: chatCompletion("understood") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "approval-required",
+      cwd,
+    });
+
+    const requestOpened = yield* Deferred.make<RuntimeRequestId>();
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.andThen(
+        event.type === "request.opened" && event.requestId
+          ? Deferred.succeed(requestOpened, event.requestId)
+          : Effect.void,
+        event.type === "turn.completed" ? Deferred.succeed(turnCompleted, undefined) : Effect.void,
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "run rm -rf /" });
+    const requestId = yield* Deferred.await(requestOpened);
+    yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "decline");
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    const secondRoundMessages = requests[1]!.body.messages as Array<Record<string, unknown>>;
+    const toolResultMessage = secondRoundMessages.find((message) => message.role === "tool");
+    assert.equal(toolResultMessage?.content, "The user declined this action.");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("auto-accept-edits auto-allows file writes but still asks before running commands", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("nvidia-auto-accept-edits");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          if (requests.length === 1) {
+            return {
+              body: toolCallCompletion([
+                {
+                  id: "call_1",
+                  name: "write_file",
+                  args: { path: "notes.txt", content: "auto-accepted" },
+                },
+              ]),
+            };
+          }
+          if (requests.length === 2) {
+            return {
+              body: toolCallCompletion([
+                { id: "call_2", name: "run_command", args: { command: "echo hi" } },
+              ]),
+            };
+          }
+          return { body: chatCompletion("all done") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "auto-accept-edits",
+      cwd,
+    });
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const requestOpened = yield* Deferred.make<RuntimeRequestId>();
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "request.opened" && event.requestId
+            ? Deferred.succeed(requestOpened, event.requestId)
+            : Effect.void,
+        ),
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "write then run" });
+    const requestId = yield* Deferred.await(requestOpened);
+
+    // Only one request.opened by the time the command tool asks -- the
+    // write went through without one.
+    const openedEvents = runtimeEvents.filter((event) => event.type === "request.opened");
+    assert.equal(openedEvents.length, 1);
+    if (openedEvents[0]?.type === "request.opened") {
+      assert.equal(openedEvents[0].payload.requestType, "command_execution_approval");
+    }
+
+    yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "accept");
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    const written = yield* fs.readFileString(`${cwd}/notes.txt`);
+    assert.equal(written, "auto-accepted");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("acceptForSession skips future approvals of the same request type", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped();
+
+    const threadId = ThreadId.make("nvidia-accept-for-session");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          if (requests.length === 1 || requests.length === 3) {
+            return {
+              body: toolCallCompletion([
+                {
+                  id: `call_${requests.length}`,
+                  name: "run_command",
+                  args: { command: "echo hi" },
+                },
+              ]),
+            };
+          }
+          return { body: chatCompletion("ok") };
+        }),
+      ),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "approval-required",
+      cwd,
+    });
+
+    const firstTurnEvents: ProviderRuntimeEvent[] = [];
+    const requestOpened = yield* Deferred.make<RuntimeRequestId>();
+    const firstTurnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        firstTurnEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "request.opened" && event.requestId
+            ? Deferred.succeed(requestOpened, event.requestId)
+            : Effect.void,
+        ),
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(firstTurnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "run it" });
+    const requestId = yield* Deferred.await(requestOpened);
+    yield* adapter.respondToRequest(
+      threadId,
+      ApprovalRequestId.make(requestId),
+      "acceptForSession",
+    );
+    yield* Deferred.await(firstTurnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    const secondTurnEvents: ProviderRuntimeEvent[] = [];
+    const secondTurnCompleted = yield* Deferred.make<void>();
+    const secondEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        secondTurnEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(secondTurnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.sendTurn({ threadId, input: "run it again" });
+    yield* Deferred.await(secondTurnCompleted);
+    yield* Fiber.interrupt(secondEventsFiber);
+
+    // The second run_command call never opened a new request -- it was
+    // remembered from the first turn's acceptForSession.
+    assert.isUndefined(secondTurnEvents.find((event) => event.type === "request.opened"));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
