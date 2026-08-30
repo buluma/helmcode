@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as PubSub from "effect/PubSub";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -52,6 +53,29 @@ function systemMessageFor(cwd: string | undefined): { role: "system"; content: s
   };
 }
 
+/**
+ * Upstream gateways occasionally 500 on transient plumbing issues (observed
+ * on NVIDIA's equivalent adapter: "Missing request extension ...
+ * axum::Extension") and clear up seconds later -- distinct from this file's
+ * own class of the same name duplicated in NvidiaAdapter.ts. Marks a
+ * response as worth retrying; never thrown for 4xx (bad key/model/quota),
+ * which are not transient.
+ */
+class OpenRouterTransientHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.status = status;
+  }
+}
+
+// Retried request never touched session state or produced any content, so
+// re-issuing it duplicates nothing -- unlike a turn already visible to the
+// user or the workspace.
+const OPENROUTER_HTTP_RETRY_SCHEDULE = Schedule.exponential("500 millis").pipe(
+  Schedule.upTo({ times: 3 }),
+);
+
 export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function* (input: {
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -80,10 +104,10 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
   const nextTurnId = Effect.map(randomUUIDv4, TurnId.make);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-  const callChatCompletions = (payload: {
+  const attemptChatCompletions = (payload: {
     readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
     readonly model: string;
-  }): Effect.Effect<string, ProviderAdapterRequestError> =>
+  }): Effect.Effect<string, ProviderAdapterRequestError | OpenRouterTransientHttpError> =>
     Effect.gen(function* () {
       const bodyEncoded = encodeJsonStringExit({
         model: payload.model,
@@ -135,10 +159,14 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
               }),
           ),
         );
+        const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
+        if (response.status >= 500) {
+          return yield* Effect.fail(new OpenRouterTransientHttpError(response.status, detail));
+        }
         return yield* new ProviderAdapterRequestError({
           provider: OPENROUTER,
           method: "chat.completions",
-          detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
+          detail,
           cause: new Error(`HTTP ${response.status}`),
         });
       }
@@ -184,6 +212,29 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
 
       return content;
     });
+
+  const callChatCompletions = (payload: {
+    readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    readonly model: string;
+  }): Effect.Effect<string, ProviderAdapterRequestError> =>
+    attemptChatCompletions(payload).pipe(
+      Effect.retry({
+        while: (error) => error instanceof OpenRouterTransientHttpError,
+        schedule: OPENROUTER_HTTP_RETRY_SCHEDULE,
+      }),
+      Effect.catch((error) =>
+        Effect.fail(
+          error instanceof OpenRouterTransientHttpError
+            ? new ProviderAdapterRequestError({
+                provider: OPENROUTER,
+                method: "chat.completions",
+                detail: error.message,
+                cause: error,
+              })
+            : error,
+        ),
+      ),
+    );
 
   const startSession: OpenRouterAdapterShape["startSession"] = (sessionInput) =>
     Effect.gen(function* () {

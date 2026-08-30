@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as PubSub from "effect/PubSub";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -38,6 +39,28 @@ interface Session {
 }
 
 const sessions = new Map<ThreadId, Session>();
+
+/**
+ * NVIDIA's gateway occasionally 500s on its own auth-extension plumbing
+ * (observed: "Missing request extension ... axum::Extension") and clears up
+ * seconds later -- distinct from this file's own class of the same name
+ * duplicated in OpenRouterAdapter.ts. Marks a response as worth retrying;
+ * never thrown for 4xx (bad key/model/quota), which are not transient.
+ */
+class NvidiaTransientHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.status = status;
+  }
+}
+
+// Retried request never touched session state or produced any content, so
+// re-issuing it duplicates nothing -- unlike a turn already visible to the
+// user or the workspace.
+const NVIDIA_HTTP_RETRY_SCHEDULE = Schedule.exponential("500 millis").pipe(
+  Schedule.upTo({ times: 3 }),
+);
 
 // This adapter is a bare chat-completions passthrough -- no tool calling, no
 // filesystem access -- so the model otherwise has nothing telling it which
@@ -80,10 +103,10 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
   const nextTurnId = Effect.map(randomUUIDv4, TurnId.make);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-  const callChatCompletions = (payload: {
+  const attemptChatCompletions = (payload: {
     readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
     readonly model: string;
-  }): Effect.Effect<string, ProviderAdapterRequestError> =>
+  }): Effect.Effect<string, ProviderAdapterRequestError | NvidiaTransientHttpError> =>
     Effect.gen(function* () {
       const bodyEncoded = encodeJsonStringExit({
         model: payload.model,
@@ -135,10 +158,14 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
               }),
           ),
         );
+        const detail = `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`;
+        if (response.status >= 500) {
+          return yield* Effect.fail(new NvidiaTransientHttpError(response.status, detail));
+        }
         return yield* new ProviderAdapterRequestError({
           provider: NVIDIA,
           method: "chat.completions",
-          detail: `HTTP ${response.status}: ${text.trim().length > 0 ? text.trim() : String(response.status)}`,
+          detail,
           cause: new Error(`HTTP ${response.status}`),
         });
       }
@@ -184,6 +211,29 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
 
       return content;
     });
+
+  const callChatCompletions = (payload: {
+    readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    readonly model: string;
+  }): Effect.Effect<string, ProviderAdapterRequestError> =>
+    attemptChatCompletions(payload).pipe(
+      Effect.retry({
+        while: (error) => error instanceof NvidiaTransientHttpError,
+        schedule: NVIDIA_HTTP_RETRY_SCHEDULE,
+      }),
+      Effect.catch((error) =>
+        Effect.fail(
+          error instanceof NvidiaTransientHttpError
+            ? new ProviderAdapterRequestError({
+                provider: NVIDIA,
+                method: "chat.completions",
+                detail: error.message,
+                cause: error,
+              })
+            : error,
+        ),
+      ),
+    );
 
   const startSession: NvidiaAdapterShape["startSession"] = (sessionInput) =>
     Effect.gen(function* () {

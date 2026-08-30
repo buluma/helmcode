@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import {
@@ -199,6 +201,11 @@ it.effect("publishes session.exited when NVIDIA responds with a non-200 status",
     ).pipe(Effect.forkChild);
 
     yield* adapter.sendTurn({ threadId, input: "hello" });
+    // Persistent 5xx exhausts the adapter's retry-with-backoff schedule
+    // before giving up; advance the virtual clock past its total delay
+    // (500ms + 1s + 2s) instead of waiting on it in real time.
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(Duration.seconds(4));
     yield* Deferred.await(exited);
     yield* Fiber.interrupt(eventsFiber);
 
