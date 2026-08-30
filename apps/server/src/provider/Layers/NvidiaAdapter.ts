@@ -406,7 +406,7 @@ const searchWorkspaceTextTool = (
       return `Error: could not resolve '${rawPath}'.`;
     }
 
-    const { entries } = yield* walkWorkspaceEntries(fs, root, realRoot, {
+    const { entries, truncated: scanTruncated } = yield* walkWorkspaceEntries(fs, root, realRoot, {
       recursive: true,
       maxEntries: WORKSPACE_TOOL_MAX_SCAN_ENTRIES,
     });
@@ -441,12 +441,16 @@ const searchWorkspaceTextTool = (
       }
     }
 
+    const scanNote = scanTruncated
+      ? `\n... (scan stopped at ${WORKSPACE_TOOL_MAX_SCAN_ENTRIES} files/directories -- results may be incomplete)`
+      : "";
+
     if (matches.length === 0) {
-      return "No matches found.";
+      return `No matches found.${scanNote}`;
     }
     return matches.length >= WORKSPACE_TOOL_MAX_MATCHES
-      ? `${matches.join("\n")}\n... (truncated at ${WORKSPACE_TOOL_MAX_MATCHES} matches)`
-      : matches.join("\n");
+      ? `${matches.join("\n")}\n... (truncated at ${WORKSPACE_TOOL_MAX_MATCHES} matches)${scanNote}`
+      : `${matches.join("\n")}${scanNote}`;
   });
 
 /**
