@@ -614,6 +614,9 @@ export function projectEvent(
                       ...(payload.latestTurnTotalCostUsd !== undefined
                         ? { totalCostUsd: payload.latestTurnTotalCostUsd }
                         : {}),
+                      ...(payload.latestTurnTokenUsage !== undefined
+                        ? { tokenUsage: payload.latestTurnTokenUsage }
+                        : {}),
                     }
                   : thread.latestTurn,
             updatedAt: event.occurredAt,

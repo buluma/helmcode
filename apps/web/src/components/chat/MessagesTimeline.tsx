@@ -14,6 +14,16 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+
+// Most turns cost fractions of a cent -- a fixed 2-decimal format (the usage
+// page's convention) would round everything under a cent down to "$0.00".
+function formatTurnCostUsd(value: number): string {
+  if (value === 0) return "$0.00";
+  if (value < 0.01) {
+    return value < 0.0001 ? "<$0.0001" : `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
 import { resolveChatListAnchoredEndSpace } from "@helmcode/shared/chatList";
 import {
   createContext,
@@ -106,6 +116,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@helmcode/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { formatTokens } from "@helmcode/shared/usageFormat";
 
 import {
   buildInlineTerminalContextText,
@@ -153,6 +164,11 @@ interface TimelineRowActivityState {
   latestTurnId: TurnId | null;
   /** Current plan step label for the working row, when the turn has a plan. */
   workingStepLabel: string | null;
+  // Only ever known for the thread's latest turn -- an older, superseded
+  // turn's cost/usage isn't retained in the read model, so these are only
+  // ever shown next to the message that belongs to latestTurnId.
+  latestTurnTotalCostUsd: number | null;
+  latestTurnUsedTokens: number | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -542,8 +558,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnInProgress,
       latestTurnId: latestTurn?.turnId ?? null,
       workingStepLabel,
+      latestTurnTotalCostUsd: latestTurn?.totalCostUsd ?? null,
+      latestTurnUsedTokens: latestTurn?.tokenUsage?.usedTokens ?? null,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
+    [
+      activeTurnInProgress,
+      isRevertingCheckpoint,
+      isWorking,
+      latestTurn?.turnId,
+      latestTurn?.totalCostUsd,
+      latestTurn?.tokenUsage?.usedTokens,
+      workingStepLabel,
+    ],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -1103,7 +1129,11 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  // Cost/usage is only ever retained for the thread's latest turn -- an
+  // older, superseded turn's numbers aren't kept in the read model.
+  const showTurnUsage = row.message.turnId !== null && row.message.turnId === activity.latestTurnId;
 
   return (
     <>
@@ -1136,6 +1166,21 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 </TooltipPopup>
               </Tooltip>
             )}
+            {showTurnUsage &&
+            (activity.latestTurnTotalCostUsd !== null || activity.latestTurnUsedTokens !== null) ? (
+              <span className="text-muted-foreground/70">
+                {[
+                  activity.latestTurnTotalCostUsd !== null
+                    ? formatTurnCostUsd(activity.latestTurnTotalCostUsd)
+                    : null,
+                  activity.latestTurnUsedTokens !== null
+                    ? `${formatTokens(activity.latestTurnUsedTokens)} tokens`
+                    : null,
+                ]
+                  .filter((part) => part !== null)
+                  .join(" · ")}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>

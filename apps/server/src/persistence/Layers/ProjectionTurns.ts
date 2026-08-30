@@ -1,4 +1,4 @@
-import { OrchestrationCheckpointFile } from "@helmcode/contracts";
+import { OrchestrationCheckpointFile, ThreadTokenUsageSnapshot } from "@helmcode/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -24,12 +24,14 @@ import {
 const ProjectionTurnDbRowSchema = ProjectionTurn.mapFields(
   Struct.assign({
     checkpointFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    tokenUsage: Schema.NullOr(Schema.fromJsonString(ThreadTokenUsageSnapshot)),
   }),
 );
 
 const ProjectionTurnByIdDbRowSchema = ProjectionTurnById.mapFields(
   Struct.assign({
     checkpointFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    tokenUsage: Schema.NullOr(Schema.fromJsonString(ThreadTokenUsageSnapshot)),
   }),
 );
 
@@ -60,6 +62,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           completed_at,
           stop_reason,
           total_cost_usd,
+          token_usage_json,
           checkpoint_turn_count,
           checkpoint_ref,
           checkpoint_status,
@@ -78,6 +81,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.completedAt},
           ${row.stopReason},
           ${row.totalCostUsd},
+          ${row.tokenUsage},
           ${row.checkpointTurnCount},
           ${row.checkpointRef},
           ${row.checkpointStatus},
@@ -95,6 +99,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           completed_at = excluded.completed_at,
           stop_reason = excluded.stop_reason,
           total_cost_usd = excluded.total_cost_usd,
+          token_usage_json = excluded.token_usage_json,
           checkpoint_turn_count = excluded.checkpoint_turn_count,
           checkpoint_ref = excluded.checkpoint_ref,
           checkpoint_status = excluded.checkpoint_status,
@@ -131,6 +136,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           completed_at,
           stop_reason,
           total_cost_usd,
+          token_usage_json,
           checkpoint_turn_count,
           checkpoint_ref,
           checkpoint_status,
@@ -145,6 +151,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           NULL,
           'pending',
           ${row.requestedAt},
+          NULL,
           NULL,
           NULL,
           NULL,
@@ -197,6 +204,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           completed_at AS "completedAt",
           stop_reason AS "stopReason",
           total_cost_usd AS "totalCostUsd",
+          token_usage_json AS "tokenUsage",
           checkpoint_turn_count AS "checkpointTurnCount",
           checkpoint_ref AS "checkpointRef",
           checkpoint_status AS "checkpointStatus",
@@ -232,6 +240,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           completed_at AS "completedAt",
           stop_reason AS "stopReason",
           total_cost_usd AS "totalCostUsd",
+          token_usage_json AS "tokenUsage",
           checkpoint_turn_count AS "checkpointTurnCount",
           checkpoint_ref AS "checkpointRef",
           checkpoint_status AS "checkpointStatus",

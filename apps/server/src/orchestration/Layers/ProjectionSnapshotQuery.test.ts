@@ -313,6 +313,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             assistantMessageId: asMessageId("message-1"),
             stopReason: null,
             totalCostUsd: null,
+            tokenUsage: null,
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
@@ -434,6 +435,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             assistantMessageId: asMessageId("message-1"),
             stopReason: null,
             totalCostUsd: null,
+            tokenUsage: null,
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",

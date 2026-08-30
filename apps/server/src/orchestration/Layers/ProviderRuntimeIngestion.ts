@@ -97,6 +97,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
+const LATEST_TOKEN_USAGE_BY_THREAD_CACHE_CAPACITY = 10_000;
+const LATEST_TOKEN_USAGE_BY_THREAD_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD =
   process.env.HELMCODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
@@ -932,6 +934,20 @@ const make = Effect.gen(function* () {
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
 
+  // Last thread.token-usage.updated snapshot per thread, so a settling turn
+  // can attach whatever was most recently known even though the two events
+  // arrive independently. Tagged with the turn it was reported for so a
+  // snapshot left over from a prior turn can't attach to one that never
+  // reported its own usage.
+  const latestTokenUsageByThread = yield* Cache.make<
+    ThreadId,
+    { turnId: TurnId | undefined; usage: ThreadTokenUsageSnapshot } | null
+  >({
+    capacity: LATEST_TOKEN_USAGE_BY_THREAD_CACHE_CAPACITY,
+    timeToLive: LATEST_TOKEN_USAGE_BY_THREAD_TTL,
+    lookup: () => Effect.succeed(null),
+  });
+
   // Entries are left in place after completion so replayed or duplicate
   // terminal events stay titled; TTL, capacity, and the session-exit sweep
   // bound the cache.
@@ -1491,6 +1507,17 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
+      // Remembered here (not read back until the turn settles below) so the
+      // most recent snapshot survives to land on latestTurn -- token usage
+      // and turn.completed are reported as two separate, independently
+      // timed runtime events.
+      if (event.type === "thread.token-usage.updated") {
+        yield* Cache.set(latestTokenUsageByThread, thread.id, {
+          turnId: toTurnId(event.turnId),
+          usage: event.payload.usage,
+        });
+      }
+
       let loadedThreadDetail: OrchestrationThread | null | undefined;
       const getLoadedThreadDetail = () =>
         Effect.gen(function* () {
@@ -1639,6 +1666,24 @@ const make = Effect.gen(function* () {
             );
           }
 
+          const cachedTokenUsage =
+            event.type === "turn.completed"
+              ? yield* Cache.get(latestTokenUsageByThread, thread.id)
+              : null;
+          // Only attach a snapshot reported for this same turn -- one left
+          // over from a prior turn (or with no turn id at all) must not be
+          // shown as this turn's usage.
+          const latestTokenUsage =
+            cachedTokenUsage !== null &&
+            eventTurnId !== undefined &&
+            cachedTokenUsage.turnId !== undefined &&
+            sameId(cachedTokenUsage.turnId, eventTurnId)
+              ? cachedTokenUsage.usage
+              : null;
+          if (event.type === "turn.completed") {
+            yield* Cache.set(latestTokenUsageByThread, thread.id, null);
+          }
+
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "thread-session-set"),
@@ -1664,6 +1709,10 @@ const make = Effect.gen(function* () {
             ...(event.type === "turn.completed" && event.payload.totalCostUsd !== undefined
               ? { latestTurnTotalCostUsd: event.payload.totalCostUsd }
               : {}),
+            // Sourced from the last thread.token-usage.updated snapshot seen
+            // for this thread, not from turn.completed's own payload -- token
+            // usage is reported on its own event, independently timed.
+            ...(latestTokenUsage !== null ? { latestTurnTokenUsage: latestTokenUsage } : {}),
             createdAt: now,
           });
         }
