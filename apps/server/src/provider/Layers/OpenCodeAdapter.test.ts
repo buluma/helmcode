@@ -37,7 +37,9 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  openCodeTokenUsageSnapshot,
 } from "./OpenCodeAdapter.ts";
+import type { AssistantMessage } from "@opencode-ai/sdk/v2";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
 class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
@@ -970,6 +972,70 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         { sessionID: "http://127.0.0.1:9999/session" },
       ]);
       NodeAssert.deepEqual(snapshot.turns, []);
+    }),
+  );
+
+  it.effect("maps an assistant message's tokens/cost into a ThreadTokenUsageSnapshot", () =>
+    Effect.sync(() => {
+      const baseInfo = {
+        id: "msg-1",
+        sessionID: "ses_1",
+        role: "assistant" as const,
+        time: { created: 0 },
+        parentID: "p1",
+        modelID: "gpt-5",
+        providerID: "openai",
+        mode: "build",
+        path: { cwd: "/", root: "/" },
+      };
+
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot({
+          ...baseInfo,
+          cost: 0.0042,
+          tokens: { input: 100, output: 40, reasoning: 10, cache: { read: 5, write: 0 } },
+        } as AssistantMessage),
+        {
+          usedTokens: 150,
+          inputTokens: 100,
+          outputTokens: 40,
+          reasoningOutputTokens: 10,
+          cachedInputTokens: 5,
+        },
+      );
+
+      // `tokens.total`, when present, wins over summing the parts.
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot({
+          ...baseInfo,
+          cost: 0,
+          tokens: {
+            total: 999,
+            input: 100,
+            output: 40,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+        } as AssistantMessage),
+        { usedTokens: 999, inputTokens: 100, outputTokens: 40 },
+      );
+
+      // No tokens object at all -- an early/synthetic message.updated event
+      // this adapter has to tolerate without throwing.
+      NodeAssert.equal(
+        openCodeTokenUsageSnapshot({ ...baseInfo } as unknown as AssistantMessage),
+        undefined,
+      );
+
+      // Tokens present but all zero -- still streaming, nothing to report yet.
+      NodeAssert.equal(
+        openCodeTokenUsageSnapshot({
+          ...baseInfo,
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        } as AssistantMessage),
+        undefined,
+      );
     }),
   );
 
