@@ -605,6 +605,15 @@ export function projectEvent(
                       // placeholder checkpoint timestamp — the session leaving
                       // "running" is the authoritative turn end.
                       completedAt: session.updatedAt,
+                      // Only ever known once the provider's turn.completed
+                      // event carried one -- this command is the one settling
+                      // the turn, so this is the one place they can land.
+                      ...(payload.latestTurnStopReason !== undefined
+                        ? { stopReason: payload.latestTurnStopReason }
+                        : {}),
+                      ...(payload.latestTurnTotalCostUsd !== undefined
+                        ? { totalCostUsd: payload.latestTurnTotalCostUsd }
+                        : {}),
                     }
                   : thread.latestTurn,
             updatedAt: event.occurredAt,

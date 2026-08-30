@@ -44,6 +44,10 @@ export const ProjectionTurn = Schema.Struct({
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
+  // Only ever known once the provider's turn.completed event carried one --
+  // null while running, and for turns/providers that never reported one.
+  stopReason: Schema.NullOr(Schema.String),
+  totalCostUsd: Schema.NullOr(Schema.Number),
   checkpointTurnCount: Schema.NullOr(NonNegativeInt),
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
@@ -62,6 +66,8 @@ export const ProjectionTurnById = Schema.Struct({
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
+  stopReason: Schema.NullOr(Schema.String),
+  totalCostUsd: Schema.NullOr(Schema.Number),
   checkpointTurnCount: Schema.NullOr(NonNegativeInt),
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),

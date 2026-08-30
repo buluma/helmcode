@@ -311,6 +311,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
             assistantMessageId: asMessageId("message-1"),
+            stopReason: null,
+            totalCostUsd: null,
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
@@ -430,6 +432,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
             assistantMessageId: asMessageId("message-1"),
+            stopReason: null,
+            totalCostUsd: null,
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",

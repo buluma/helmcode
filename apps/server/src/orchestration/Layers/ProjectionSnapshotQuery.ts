@@ -109,6 +109,8 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   assistantMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  stopReason: Schema.NullOr(Schema.String),
+  totalCostUsd: Schema.NullOr(Schema.Number),
 });
 const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionCountsRowSchema = Schema.Struct({
@@ -271,6 +273,8 @@ function mapLatestTurn(
     startedAt: row.startedAt,
     completedAt: row.completedAt,
     assistantMessageId: row.assistantMessageId,
+    stopReason: row.stopReason,
+    totalCostUsd: row.totalCostUsd,
     ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
       ? {
           sourceProposedPlan: {
@@ -683,6 +687,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
+          turns.stop_reason AS "stopReason",
+          turns.total_cost_usd AS "totalCostUsd",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -707,6 +713,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
+          turns.stop_reason AS "stopReason",
+          turns.total_cost_usd AS "totalCostUsd",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -733,6 +741,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
+          turns.stop_reason AS "stopReason",
+          turns.total_cost_usd AS "totalCostUsd",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -1057,6 +1067,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
+          turns.stop_reason AS "stopReason",
+          turns.total_cost_usd AS "totalCostUsd",
           turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           turns.source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_threads threads
@@ -1498,29 +1510,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 if (latestTurnByThread.has(row.threadId)) {
                   continue;
                 }
-                latestTurnByThread.set(row.threadId, {
-                  turnId: row.turnId,
-                  state:
-                    row.state === "error"
-                      ? "error"
-                      : row.state === "interrupted"
-                        ? "interrupted"
-                        : row.state === "completed"
-                          ? "completed"
-                          : "running",
-                  requestedAt: row.requestedAt,
-                  startedAt: row.startedAt,
-                  completedAt: row.completedAt,
-                  assistantMessageId: row.assistantMessageId,
-                  ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
-                    ? {
-                        sourceProposedPlan: {
-                          threadId: row.sourceProposedPlanThreadId,
-                          planId: row.sourceProposedPlanId,
-                        },
-                      }
-                    : {}),
-                });
+                // Was a hand-inlined duplicate of mapLatestTurn's mapping --
+                // duplicated logic is exactly how stopReason/totalCostUsd
+                // ended up wired into mapLatestTurn but not here.
+                latestTurnByThread.set(row.threadId, mapLatestTurn(row));
               }
 
               for (const row of sessionRows) {
