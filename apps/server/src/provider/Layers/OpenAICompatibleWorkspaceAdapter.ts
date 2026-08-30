@@ -49,6 +49,7 @@ import {
   type RuntimeMode,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   TurnId,
 } from "@helmcode/contracts";
 import { isHostWindows } from "@helmcode/shared/hostProcess";
@@ -823,9 +824,45 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
   const isTransientHttpError = Schema.is(TransientHttpError);
   const isToolsUnsupportedError = Schema.is(ToolsUnsupportedError);
 
+  interface ChatCompletionUsage {
+    readonly inputTokens: number | undefined;
+    readonly outputTokens: number | undefined;
+    readonly totalTokens: number | undefined;
+    // Only OpenRouter ever reports this (opt-in via the `usage.include`
+    // request field below); NVIDIA's catalog API isn't billed per-token.
+    readonly costUsd: number | undefined;
+  }
+
   interface ChatCompletionResult {
     readonly content: string | null;
     readonly toolCalls: ReadonlyArray<ChatToolCall>;
+    readonly usage: ChatCompletionUsage | undefined;
+    readonly finishReason: string | undefined;
+  }
+
+  /**
+   * OpenRouter reports `usage.cost` (USD) only when the request opts in via
+   * `usage: { include: true }`; NVIDIA ignores the field since it isn't
+   * billed at all. Both report the standard OpenAI-shaped token counts
+   * unconditionally.
+   */
+  const REPORTS_COST_USD = LABEL === "OpenRouter";
+
+  function toThreadTokenUsageSnapshot(
+    usage: ChatCompletionUsage | undefined,
+  ): ThreadTokenUsageSnapshot | undefined {
+    if (!usage) {
+      return undefined;
+    }
+    const usedTokens = usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+    if (usedTokens <= 0) {
+      return undefined;
+    }
+    return {
+      usedTokens,
+      ...(usage.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}),
+      ...(usage.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),
+    };
   }
 
   // Retried request never touched session state or produced any content, so
@@ -955,6 +992,7 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
           messages: payload.messages,
           temperature: 0.2,
           ...(payload.tools ? { tools: payload.tools, tool_choice: "auto" } : {}),
+          ...(REPORTS_COST_USD ? { usage: { include: true } } : {}),
         });
         const bodyText =
           bodyEncoded._tag === "Failure"
@@ -1075,7 +1113,25 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
           });
         }
 
-        return { content, toolCalls };
+        const finishReason =
+          typeof choices[0]?.finish_reason === "string" ? choices[0].finish_reason : undefined;
+        const rawUsage = parsed.usage as Record<string, unknown> | undefined;
+        const inputTokens =
+          typeof rawUsage?.prompt_tokens === "number" ? rawUsage.prompt_tokens : undefined;
+        const outputTokens =
+          typeof rawUsage?.completion_tokens === "number" ? rawUsage.completion_tokens : undefined;
+        const totalTokens =
+          typeof rawUsage?.total_tokens === "number" ? rawUsage.total_tokens : undefined;
+        const costUsd = typeof rawUsage?.cost === "number" ? rawUsage.cost : undefined;
+        const usage: ChatCompletionUsage | undefined =
+          inputTokens !== undefined ||
+          outputTokens !== undefined ||
+          totalTokens !== undefined ||
+          costUsd !== undefined
+            ? { inputTokens, outputTokens, totalTokens, costUsd }
+            : undefined;
+
+        return { content, toolCalls, usage, finishReason };
       });
 
     const retryTransient = <A>(
@@ -1170,12 +1226,26 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
     }): Effect.Effect<
-      { readonly appendedMessages: ReadonlyArray<ChatMessage>; readonly finalText: string },
+      {
+        readonly appendedMessages: ReadonlyArray<ChatMessage>;
+        readonly finalText: string;
+        readonly tokenUsage: ThreadTokenUsageSnapshot | undefined;
+        readonly totalCostUsd: number | undefined;
+        readonly stopReason: string | undefined;
+      },
       ProviderAdapterRequestError
     > =>
       Effect.gen(function* () {
         const appended: Array<ChatMessage> = [loopInput.userMessage];
         const cwd = loopInput.session.cwd;
+        // Each round resends the full growing history, so a later round's
+        // token counts already include every earlier one -- reporting the
+        // last round's usage as the turn's snapshot (not summed) mirrors how
+        // Claude reports "current context size" rather than tokens-per-call.
+        // Cost, by contrast, is one real billed request per round, so it's
+        // summed across every round that reported one.
+        let lastUsage: ChatCompletionUsage | undefined;
+        let totalCostUsd: number | undefined;
 
         for (let round = 0; round < TOOL_LOOP_MAX_ROUNDS; round++) {
           const result = yield* callChatCompletions({
@@ -1183,11 +1253,23 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
             model: loopInput.model,
             tools: cwd !== undefined ? WORKSPACE_TOOLS : undefined,
           });
+          if (result.usage) {
+            lastUsage = result.usage;
+          }
+          if (result.usage?.costUsd !== undefined) {
+            totalCostUsd = (totalCostUsd ?? 0) + result.usage.costUsd;
+          }
 
           if (result.toolCalls.length === 0) {
             const finalText = result.content ?? "";
             appended.push({ role: "assistant", content: finalText });
-            return { appendedMessages: appended, finalText };
+            return {
+              appendedMessages: appended,
+              finalText,
+              tokenUsage: toThreadTokenUsageSnapshot(lastUsage),
+              totalCostUsd,
+              stopReason: result.finishReason,
+            };
           }
 
           appended.push({
@@ -1264,7 +1346,13 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
         const finalText =
           "I hit the tool-call round limit while looking into this. Ask again to continue -- I'll pick up where I left off.";
         appended.push({ role: "assistant", content: finalText });
-        return { appendedMessages: appended, finalText };
+        return {
+          appendedMessages: appended,
+          finalText,
+          tokenUsage: toThreadTokenUsageSnapshot(lastUsage),
+          totalCostUsd,
+          stopReason: "round_limit",
+        };
       });
 
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (turnInput) =>
@@ -1310,14 +1398,15 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
 
           const userMessage: ChatMessage = { role: "user", content: turnInput.input ?? "" };
 
-          const { appendedMessages, finalText } = yield* runToolLoop({
-            session,
-            model: turnInput.modelSelection?.model ?? input.defaultModel,
-            history: session.messages,
-            userMessage,
-            threadId: turnInput.threadId,
-            turnId,
-          });
+          const { appendedMessages, finalText, tokenUsage, totalCostUsd, stopReason } =
+            yield* runToolLoop({
+              session,
+              model: turnInput.modelSelection?.model ?? input.defaultModel,
+              history: session.messages,
+              userMessage,
+              threadId: turnInput.threadId,
+              turnId,
+            });
 
           // An interruptTurn/stopSession/stopAll that raced with this turn
           // already deleted the session -- writing it back here would
@@ -1332,6 +1421,18 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
               // have mutated it in place while the loop ran, and that has to
               // survive into the session record replacing `session` here.
               autoAcceptedRequestTypes: session.autoAcceptedRequestTypes,
+            });
+          }
+
+          if (tokenUsage) {
+            yield* publish({
+              eventId: yield* nextEventId,
+              provider: PROVIDER,
+              threadId: turnInput.threadId,
+              turnId,
+              createdAt: yield* nowIso,
+              type: "thread.token-usage.updated",
+              payload: { usage: tokenUsage },
             });
           }
 
@@ -1367,7 +1468,11 @@ export function makeOpenAICompatibleWorkspaceAdapter(providerConfig: {
             turnId,
             createdAt: yield* nowIso,
             type: "turn.completed",
-            payload: { state: "completed" },
+            payload: {
+              state: "completed",
+              ...(stopReason !== undefined ? { stopReason } : {}),
+              ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
+            },
           });
         }).pipe(
           Effect.catchCause((cause) =>

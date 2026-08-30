@@ -185,6 +185,71 @@ it.effect("starts a session and completes a turn against a mocked chat completio
   }),
 );
 
+it.effect("reports token usage but never a cost -- NVIDIA's catalog API isn't billed", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("nvidia-token-usage");
+    const requests: CapturedRequest[] = [];
+    const adapter = yield* makeTestAdapter().pipe(
+      Effect.provide(
+        testLayer((captured) => {
+          requests.push(captured);
+          return {
+            body: {
+              choices: [
+                { message: { role: "assistant", content: "Done." }, finish_reason: "stop" },
+              ],
+              usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 },
+            },
+          };
+        }),
+      ),
+    );
+
+    const runtimeEvents: ProviderRuntimeEvent[] = [];
+    const turnCompleted = yield* Deferred.make<void>();
+    const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+      Effect.sync(() => {
+        runtimeEvents.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.completed"
+            ? Deferred.succeed(turnCompleted, undefined)
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkChild);
+
+    yield* adapter.startSession({
+      threadId,
+      provider: ProviderDriverKind.make("nvidia"),
+      runtimeMode: "full-access",
+    });
+    yield* adapter.sendTurn({ threadId, input: "Wrap it up." });
+    yield* Deferred.await(turnCompleted);
+    yield* Fiber.interrupt(eventsFiber);
+
+    // NVIDIA never gets asked for cost accounting -- only OpenRouter opts in.
+    assert.notProperty(requests[0]!.body, "usage");
+
+    const usageUpdated = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+    assert.isDefined(usageUpdated);
+    if (usageUpdated?.type === "thread.token-usage.updated") {
+      assert.deepEqual(usageUpdated.payload.usage, {
+        usedTokens: 150,
+        inputTokens: 120,
+        outputTokens: 30,
+      });
+    }
+
+    const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+    assert.isDefined(completed);
+    if (completed?.type === "turn.completed") {
+      assert.equal(completed.payload.stopReason, "stop");
+      assert.isUndefined(completed.payload.totalCostUsd);
+    }
+  }),
+);
+
 it.effect("publishes a session.exited event when sending a turn for an unknown thread", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("nvidia-unknown-thread");
