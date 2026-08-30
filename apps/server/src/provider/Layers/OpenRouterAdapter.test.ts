@@ -115,7 +115,14 @@ it.effect("starts a session and completes a turn against a mocked chat completio
     assert.equal(requests[0]!.authorization, "Bearer test-openrouter-key");
     assert.equal(requests[0]!.contentType, "application/json");
     assert.equal(requests[0]!.body.model, "anthropic/claude-sonnet-4.5");
-    assert.deepEqual(requests[0]!.body.messages, [{ role: "user", content: "Say hello." }]);
+    assert.deepEqual(requests[0]!.body.messages, [
+      {
+        role: "system",
+        content:
+          "You have no file, shell, or tool access -- you cannot read or list any codebase. If the user asks about code, ask them to paste it.",
+      },
+      { role: "user", content: "Say hello." },
+    ]);
 
     const types = runtimeEvents.map((event) => event.type);
     assert.includeMembers(types, [

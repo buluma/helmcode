@@ -33,10 +33,24 @@ const encodeJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Sche
 const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 interface Session {
+  readonly cwd: string | undefined;
   readonly messages: Array<{ readonly role: "user" | "assistant"; readonly content: string }>;
 }
 
 const sessions = new Map<ThreadId, Session>();
+
+// This adapter is a bare chat-completions passthrough -- no tool calling, no
+// filesystem access -- so the model otherwise has nothing telling it which
+// repo it's supposedly helping with. A system message naming the working
+// directory at least stops it from claiming no codebase was shared.
+function systemMessageFor(cwd: string | undefined): { role: "system"; content: string } {
+  return {
+    role: "system",
+    content: cwd
+      ? `You are assisting with the project checked out at ${cwd}. You have no file, shell, or tool access -- you cannot read or list its contents. If the user asks about code, ask them to paste it.`
+      : "You have no file, shell, or tool access -- you cannot read or list any codebase. If the user asks about code, ask them to paste it.",
+  };
+}
 
 export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input: {
   readonly apiKey: string;
@@ -173,7 +187,7 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
 
   const startSession: NvidiaAdapterShape["startSession"] = (sessionInput) =>
     Effect.gen(function* () {
-      sessions.set(sessionInput.threadId, { messages: [] });
+      sessions.set(sessionInput.threadId, { cwd: sessionInput.cwd, messages: [] });
 
       yield* publish({
         eventId: yield* nextEventId,
@@ -231,11 +245,16 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         const userMessage = turnInput.input ?? "";
 
         const fullText = yield* callChatCompletions({
-          messages: [...session.messages, { role: "user" as const, content: userMessage }],
+          messages: [
+            systemMessageFor(session.cwd),
+            ...session.messages,
+            { role: "user" as const, content: userMessage },
+          ],
           model: turnInput.modelSelection?.model ?? input.defaultModel,
         });
 
         sessions.set(turnInput.threadId, {
+          cwd: session.cwd,
           messages: [
             ...session.messages,
             { role: "user" as const, content: userMessage },
@@ -414,7 +433,10 @@ export const makeNvidiaAdapter = Effect.fn("makeNvidiaAdapter")(function* (input
         return yield* new ProviderAdapterSessionNotFoundError({ provider: NVIDIA, threadId });
       }
 
-      sessions.set(threadId, { messages: session.messages.slice(0, -numTurns * 2) });
+      sessions.set(threadId, {
+        cwd: session.cwd,
+        messages: session.messages.slice(0, -numTurns * 2),
+      });
       return { threadId, turns: [] } as ProviderThreadSnapshot;
     });
 
