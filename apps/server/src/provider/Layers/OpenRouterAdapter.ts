@@ -572,6 +572,30 @@ interface WorkspaceCommandResult {
  * decision before this ever runs. Output is capped and the process is
  * killed on timeout so one runaway command can't hang or flood a turn.
  */
+/**
+ * Kills `pid` and everything it spawned, not just the shell itself -- a
+ * plain `child.kill()` only signals the shell process, so a command like
+ * `sleep 30 &` leaves its background descendant running past timeout or
+ * interruption. POSIX: the shell is spawned detached so it leads its own
+ * process group, and a negative pid signals the whole group. Windows has no
+ * process-group concept here, so `taskkill /T` walks the process tree.
+ */
+function killProcessTree(pid: number, isWindows: boolean): void {
+  if (isWindows) {
+    NodeChildProcess.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // The group leader may already be gone (e.g. it exited on its own
+    // between the close/error event and this cleanup running).
+  }
+}
+
 const runShellCommand = (
   cwd: string,
   command: string,
@@ -581,15 +605,20 @@ const runShellCommand = (
     const child = NodeChildProcess.spawn(
       isWindows ? "cmd.exe" : "/bin/sh",
       isWindows ? ["/d", "/s", "/c", command] : ["-c", command],
-      { cwd, windowsHide: true },
+      { cwd, windowsHide: true, detached: !isWindows },
     );
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    const killTree = (): void => {
+      if (typeof child.pid === "number") {
+        killProcessTree(child.pid, isWindows);
+      }
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killTree();
     }, WORKSPACE_COMMAND_TIMEOUT_MS);
 
     const append = (current: string, chunk: Buffer): string =>
@@ -616,7 +645,7 @@ const runShellCommand = (
 
     return Effect.sync(() => {
       clearTimeout(timer);
-      child.kill("SIGKILL");
+      killTree();
     });
   });
 
