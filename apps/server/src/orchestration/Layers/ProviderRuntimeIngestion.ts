@@ -1655,6 +1655,15 @@ const make = Effect.gen(function* () {
               lastError,
               updatedAt: now,
             },
+            // Only turn.completed ever carries these -- every adapter that
+            // reports cost/stop-reason (Claude, Grok, Cursor) puts them on
+            // this event, and until now nothing downstream read them.
+            ...(event.type === "turn.completed" && event.payload.stopReason !== undefined
+              ? { latestTurnStopReason: event.payload.stopReason }
+              : {}),
+            ...(event.type === "turn.completed" && event.payload.totalCostUsd !== undefined
+              ? { latestTurnTotalCostUsd: event.payload.totalCostUsd }
+              : {}),
             createdAt: now,
           });
         }

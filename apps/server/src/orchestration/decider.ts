@@ -1164,6 +1164,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           session: command.session,
+          ...(command.latestTurnStopReason !== undefined
+            ? { latestTurnStopReason: command.latestTurnStopReason }
+            : {}),
+          ...(command.latestTurnTotalCostUsd !== undefined
+            ? { latestTurnTotalCostUsd: command.latestTurnTotalCostUsd }
+            : {}),
         },
       };
       // Only a session coming alive is activity worth waking a settled thread

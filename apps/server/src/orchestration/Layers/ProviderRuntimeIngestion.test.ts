@@ -712,6 +712,41 @@ describe("ProviderRuntimeIngestion", () => {
       }),
   );
 
+  effectIt.effect("carries stopReason and totalCostUsd from turn.completed onto latestTurn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId("turn-with-cost");
+
+      // Claude/Grok/Cursor all report these on turn.completed; nothing
+      // downstream ever read them before this wiring existed.
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-turn-started-with-cost"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        turnId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-turn-completed-with-cost"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        turnId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        payload: { state: "completed", stopReason: "end_turn", totalCostUsd: 0.0042 },
+      });
+
+      yield* Effect.promise(() => harness.drain());
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.latestTurn?.stopReason).toBe("end_turn");
+      expect(thread?.latestTurn?.totalCostUsd).toBe(0.0042);
+    }),
+  );
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

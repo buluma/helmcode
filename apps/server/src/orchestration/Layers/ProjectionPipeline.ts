@@ -1195,6 +1195,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                       // placeholder checkpoint timestamp — the session leaving
                       // "running" is the authoritative turn end.
                       completedAt: event.payload.session.updatedAt,
+                      // Only ever known once the provider's turn.completed
+                      // event carried one -- this command is the one settling
+                      // the turn, so this is the one place they can land.
+                      stopReason: event.payload.latestTurnStopReason ?? turn.stopReason,
+                      totalCostUsd: event.payload.latestTurnTotalCostUsd ?? turn.totalCostUsd,
                     }),
               { concurrency: 1 },
             );
@@ -1284,6 +1289,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 ? pendingTurnStart.value.requestedAt
                 : event.occurredAt,
               completedAt: null,
+              stopReason: null,
+              totalCostUsd: null,
               checkpointTurnCount: null,
               checkpointRef: null,
               checkpointStatus: null,
@@ -1348,6 +1355,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
             completedAt: settlesTurn ? event.payload.updatedAt : null,
+            stopReason: null,
+            totalCostUsd: null,
             checkpointTurnCount: null,
             checkpointRef: null,
             checkpointStatus: null,
@@ -1385,6 +1394,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
             completedAt: event.payload.createdAt,
+            stopReason: null,
+            totalCostUsd: null,
             checkpointTurnCount: null,
             checkpointRef: null,
             checkpointStatus: null,
@@ -1440,6 +1451,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             requestedAt: event.payload.completedAt,
             startedAt: event.payload.completedAt,
             completedAt: event.payload.completedAt,
+            stopReason: null,
+            totalCostUsd: null,
             checkpointTurnCount: event.payload.checkpointTurnCount,
             checkpointRef: event.payload.checkpointRef,
             checkpointStatus: event.payload.status,

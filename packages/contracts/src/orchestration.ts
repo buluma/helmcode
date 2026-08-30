@@ -352,6 +352,12 @@ export const OrchestrationLatestTurn = Schema.Struct({
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Both come straight off the provider's turn.completed event and are only
+  // ever known once the turn actually settles -- absent while running, and
+  // absent for providers/turns that never reported one. Optional so payloads
+  // from pre-cost-tracking servers still decode.
+  stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  totalCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
@@ -955,6 +961,11 @@ const ThreadSessionSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  // Carried separately from `session` (a session has no notion of a turn's
+  // stop reason or cost) so the projector can merge them onto latestTurn
+  // only when this command is the one settling it.
+  latestTurnStopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  latestTurnTotalCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
   createdAt: IsoDateTime,
 });
 
@@ -1282,6 +1293,8 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
+  latestTurnStopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  latestTurnTotalCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
