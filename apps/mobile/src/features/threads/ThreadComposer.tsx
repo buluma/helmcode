@@ -7,6 +7,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as HelmCodeServerConfig,
+  ServerProviderSkill,
 } from "@helmcode/contracts";
 import {
   detectComposerTrigger,
@@ -78,6 +79,20 @@ import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-
  * Exported so the parent can compute feed overlap / content insets.
  */
 export const COMPOSER_COLLAPSED_CHROME = 60;
+
+function dedupeProviderSkillsByName(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ServerProviderSkill[] {
+  const seenNames = new Set<string>();
+  return skills.filter((skill) => {
+    const normalizedName = skill.name.trim().toLowerCase();
+    if (seenNames.has(normalizedName)) {
+      return false;
+    }
+    seenNames.add(normalizedName);
+    return true;
+  });
+}
 
 /**
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
@@ -431,7 +446,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = dedupeProviderSkillsByName(
+        (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled),
+      );
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
