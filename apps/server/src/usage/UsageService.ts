@@ -542,15 +542,17 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
-        // Acquire semaphore to bound concurrent detached scans.
-        yield* scanSemaphore.withPermit(
-          scanSummary(input).pipe(
-            Effect.onExit((exit) =>
-              Effect.sync(() => inflightScans.delete(key)).pipe(
-                Effect.andThen(Deferred.done(created, exit)),
+        // Acquire semaphore inside the detached fiber so the permit is held for
+        // the full scan duration including cleanup.
+        yield* Effect.forkDetach(
+          scanSemaphore.withPermit(
+            scanSummary(input).pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() => inflightScans.delete(key)).pipe(
+                  Effect.andThen(Deferred.done(created, exit)),
+                ),
               ),
             ),
-            Effect.forkDetach,
           ),
         );
         return created;
