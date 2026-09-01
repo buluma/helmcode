@@ -565,7 +565,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
         projectionThreadMessageRepository.listByThreadId({ threadId }),
         projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
+        projectionThreadActivityRepository.listUserInputLifecycleByThreadId({ threadId }),
         projectionPendingApprovalRepository.listByThreadId({ threadId }),
       ]);
 
