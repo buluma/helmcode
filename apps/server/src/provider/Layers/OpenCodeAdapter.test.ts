@@ -362,6 +362,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
         `Basic ${btoa("opencode:secret-password")}`,
       ]);
+
+      yield* adapter.stopSession(asThreadId("thread-opencode"));
     }),
   );
 
