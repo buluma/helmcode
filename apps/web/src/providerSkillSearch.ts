@@ -66,12 +66,26 @@ function scoreProviderSkill(skill: ServerProviderSkill, query: string): number |
   return Math.min(...scores);
 }
 
+function dedupeProviderSkillsByName(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ServerProviderSkill[] {
+  const seenNames = new Set<string>();
+  return skills.filter((skill) => {
+    const normalizedName = skill.name.trim().toLowerCase();
+    if (seenNames.has(normalizedName)) {
+      return false;
+    }
+    seenNames.add(normalizedName);
+    return true;
+  });
+}
+
 export function searchProviderSkills(
   skills: ReadonlyArray<ServerProviderSkill>,
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  const enabledSkills = skills.filter((skill) => skill.enabled);
+  const enabledSkills = dedupeProviderSkillsByName(skills.filter((skill) => skill.enabled));
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
   if (!normalizedQuery) {

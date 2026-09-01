@@ -22,7 +22,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type {
   AssistantMessage,
@@ -182,6 +184,31 @@ type OpenCodeSubscribedEvent =
   }
     ? TEvent
     : never;
+
+type OpenCodeSessionStatusEvent = Extract<
+  OpenCodeSubscribedEvent,
+  { readonly type: "session.status" }
+>;
+
+const OpenCodeSessionStatusMap = Schema.Record(
+  Schema.String,
+  Schema.Struct({ type: Schema.String }),
+);
+const decodeOpenCodeSessionStatusMap = Schema.decodeUnknownOption(OpenCodeSessionStatusMap);
+
+type OpenCodeTerminalRequestEvent = Extract<
+  OpenCodeSubscribedEvent,
+  {
+    readonly type: "permission.replied" | "question.replied" | "question.rejected";
+  }
+>;
+
+type OpenCodeAskedRequestEvent = Extract<
+  OpenCodeSubscribedEvent,
+  { readonly type: "permission.asked" | "question.asked" }
+>;
+
+type OpenCodeRoutedRequestEvent = OpenCodeAskedRequestEvent | OpenCodeTerminalRequestEvent;
 
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
@@ -460,9 +487,13 @@ export function mergeOpenCodeAssistantText(
   readonly deltaToEmit: string;
 } {
   const latestText = resolveLatestAssistantText(previousText, nextText);
+  const previous = previousText ?? "";
+  const prefixLength = latestText.startsWith(previous)
+    ? previous.length
+    : commonPrefixLength(previous, latestText);
   return {
     latestText,
-    deltaToEmit: latestText.slice(commonPrefixLength(previousText ?? "", latestText)),
+    deltaToEmit: latestText.slice(prefixLength),
   };
 }
 
@@ -594,6 +625,117 @@ function updateProviderSession(
   });
 }
 
+function applyProviderSessionUpdate(
+  context: OpenCodeSessionContext,
+  patch: Partial<ProviderSession>,
+  options:
+    | {
+        readonly clearActiveTurnId?: boolean;
+        readonly clearLastError?: boolean;
+      }
+    | undefined,
+  updatedAt: string,
+): ProviderSession {
+  const nextSession = {
+    ...context.session,
+    ...patch,
+    updatedAt,
+  } as ProviderSession & Record<string, unknown>;
+  const mutableSession = nextSession as Record<string, unknown>;
+  if (options?.clearActiveTurnId) {
+    delete mutableSession.activeTurnId;
+  }
+  if (options?.clearLastError) {
+    delete mutableSession.lastError;
+  }
+  context.session = nextSession;
+  return nextSession;
+}
+
+const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function* (
+  context: OpenCodeSessionContext,
+) {
+  const visited = new Set([context.openCodeSessionId]);
+  const requestSemaphore = Semaphore.makeUnsafe(8);
+
+  const visit = (
+    sessionId: string,
+    abortSession: boolean,
+  ): Effect.Effect<OpenCodeRuntimeError | undefined> =>
+    Effect.gen(function* () {
+      let firstFailure: OpenCodeRuntimeError | undefined;
+      if (abortSession) {
+        const abortResult = yield* requestSemaphore
+          .withPermit(
+            runOpenCodeSdk("session.abort", () =>
+              context.client.session.abort({ sessionID: sessionId }),
+            ),
+          )
+          .pipe(
+            Effect.catchIf(
+              (cause) => isOpenCodeNotFound(cause),
+              () => Effect.void,
+            ),
+            Effect.result,
+          );
+        if (abortResult._tag === "Failure") {
+          firstFailure = abortResult.failure;
+        }
+      }
+
+      const childrenResult = yield* requestSemaphore
+        .withPermit(
+          runOpenCodeSdk("session.children", () =>
+            context.client.session.children({ sessionID: sessionId }),
+          ),
+        )
+        .pipe(
+          Effect.catchIf(
+            (cause) => isOpenCodeNotFound(cause),
+            () => Effect.void,
+          ),
+          Effect.result,
+        );
+      if (childrenResult._tag === "Failure") {
+        return firstFailure ?? childrenResult.failure;
+      }
+
+      const children =
+        (childrenResult as { success?: { data: Array<{ id: string }> } }).success?.data ?? [];
+      const newChildren = children.filter((child) => {
+        if (visited.has(child.id)) {
+          return false;
+        }
+        visited.add(child.id);
+        return true;
+      });
+      const childFailures = yield* Effect.forEach(newChildren, (child) => visit(child.id, true), {
+        concurrency: 8,
+      });
+      firstFailure ??= childFailures.find((failure) => failure !== undefined);
+      return firstFailure;
+    });
+
+  const firstFailure = yield* visit(context.openCodeSessionId, false);
+  if (firstFailure) {
+    return yield* firstFailure;
+  }
+});
+
+const abortOpenCodeSessionForTeardown = Effect.fn("abortOpenCodeSessionForTeardown")(function* (
+  context: OpenCodeSessionContext,
+) {
+  // Stop the parent before the snapshot so it cannot add another child after
+  // the adapter reads the tree.
+  yield* runOpenCodeSdk("session.abort", () =>
+    context.client.session.abort({ sessionID: context.openCodeSessionId }),
+  ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true }));
+  yield* abortOpenCodeDescendants(context).pipe(
+    Effect.timeout("1 second"),
+    Effect.ignore({ log: true }),
+  );
+});
+
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
 ) {
@@ -602,12 +744,11 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
     return false;
   }
 
-  // Best-effort remote abort. The scope close below tears down the local
-  // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
-  // but we still want to tell OpenCode that this session is done.
-  yield* runOpenCodeSdk("session.abort", () =>
-    context.client.session.abort({ sessionID: context.openCodeSessionId }),
-  ).pipe(Effect.ignore({ log: true }));
+  // Best-effort remote abort including child sessions. The scope close below
+  // tears down the local handles (event-pump fiber, server-exit fiber,
+  // event-subscribe fetch), but we still want to tell OpenCode that this
+  // session and its descendants are done.
+  yield* abortOpenCodeSessionForTeardown(context);
 
   // Closing the session scope interrupts every fiber forked into it and
   // runs each finalizer we registered — the `AbortController.abort()` call,
