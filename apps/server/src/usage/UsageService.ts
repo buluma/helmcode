@@ -33,6 +33,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
@@ -514,6 +515,10 @@ export const make = Effect.gen(function* () {
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
+  // Bounds concurrent detached scans to prevent unbounded parallel corpus scans.
+  // The value 2 mirrors the `Effect.all` concurrency used for rates + dirs.
+  const scanSemaphore = yield* Semaphore.make(2);
+
   const scanKey = (input: UsageSummaryInput): string =>
     JSON.stringify([
       input.timeZone,
@@ -537,13 +542,16 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
-        yield* scanSummary(input).pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => inflightScans.delete(key)).pipe(
-              Effect.andThen(Deferred.done(created, exit)),
+        // Acquire semaphore to bound concurrent detached scans.
+        yield* scanSemaphore.withPermit(
+          scanSummary(input).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => inflightScans.delete(key)).pipe(
+                Effect.andThen(Deferred.done(created, exit)),
+              ),
             ),
+            Effect.forkDetach,
           ),
-          Effect.forkDetach,
         );
         return created;
       }),
