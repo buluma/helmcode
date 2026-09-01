@@ -15,6 +15,16 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
+function promiseWithResolvers<T>() {
+  let resolve: (value: T | PromiseLike<T>) => void;
+  let reject: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve: resolve!, reject: reject! };
+}
+
 import {
   OpenCodeSettings,
   ProviderDriverKind,
@@ -63,6 +73,15 @@ const runtimeMock = {
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
+    abortSignals: [] as AbortSignal[],
+    abortImplementation: null as
+      | ((sessionID: string, signal?: AbortSignal) => Promise<void>)
+      | null,
+    sessionChildrenCalls: [] as string[],
+    sessionChildrenById: new Map<string, Array<{ id: string }>>(),
+    sessionChildrenImplementation: null as
+      | ((sessionID: string) => Promise<Array<{ id: string }>>)
+      | null,
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
@@ -76,6 +95,12 @@ const runtimeMock = {
     sessionDirectoryById: new Map<string, string>(),
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
+    sessionStatusCalls: 0,
+    sessionStatusFailures: 0,
+    sessionStatusImplementation: null as
+      | (() => Promise<{ data: Record<string, { type: "idle" | "busy" }> }>)
+      | null,
+    sessionStatus: "idle" as "idle" | "busy",
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -83,6 +108,11 @@ const runtimeMock = {
     this.state.sessionCreateInputs.length = 0;
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
+    this.state.abortSignals.length = 0;
+    this.state.abortImplementation = null;
+    this.state.sessionChildrenCalls.length = 0;
+    this.state.sessionChildrenById.clear();
+    this.state.sessionChildrenImplementation = null;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
@@ -96,6 +126,10 @@ const runtimeMock = {
     this.state.sessionDirectoryById.clear();
     this.state.sessionUpdateCalls.length = 0;
     this.state.forkCalls.length = 0;
+    this.state.sessionStatusCalls = 0;
+    this.state.sessionStatusFailures = 0;
+    this.state.sessionStatusImplementation = null;
+    this.state.sessionStatus = "idle";
   },
 };
 
@@ -176,8 +210,36 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }
           return { data: { id: forkedId, ...(directory ? { directory } : {}) } };
         },
-        abort: async ({ sessionID }: { sessionID: string }) => {
+        abort: async ({ sessionID }: { sessionID: string }, options?: { signal?: AbortSignal }) => {
           runtimeMock.state.abortCalls.push(sessionID);
+          if (options?.signal) {
+            runtimeMock.state.abortSignals.push(options.signal);
+          }
+          await runtimeMock.state.abortImplementation?.(sessionID, options?.signal);
+        },
+        children: async ({ sessionID }: { sessionID: string }) => {
+          runtimeMock.state.sessionChildrenCalls.push(sessionID);
+          return {
+            data: runtimeMock.state.sessionChildrenImplementation
+              ? await runtimeMock.state.sessionChildrenImplementation(sessionID)
+              : (runtimeMock.state.sessionChildrenById.get(sessionID) ?? []),
+          };
+        },
+        status: async () => {
+          runtimeMock.state.sessionStatusCalls += 1;
+          if (runtimeMock.state.sessionStatusImplementation) {
+            return await runtimeMock.state.sessionStatusImplementation();
+          }
+          if (runtimeMock.state.sessionStatusFailures > 0) {
+            runtimeMock.state.sessionStatusFailures -= 1;
+            throw new Error("status failed");
+          }
+          return {
+            data:
+              runtimeMock.state.sessionStatus === "idle"
+                ? {}
+                : { "http://127.0.0.1:9999/session": { type: "busy" as const } },
+          };
         },
         promptAsync: async (input: unknown) => {
           runtimeMock.state.promptCalls.push(input);
@@ -588,6 +650,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("stops a configured-server session without trying to own server lifecycle", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
+      const rootSessionId = "http://127.0.0.1:9999/session";
+      runtimeMock.state.sessionChildrenById.set(rootSessionId, [{ id: "ses_stop_child" }]);
+      runtimeMock.state.sessionChildrenById.set("ses_stop_child", [{ id: "ses_stop_grandchild" }]);
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId: asThreadId("thread-opencode"),
@@ -597,10 +662,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.stopSession(asThreadId("thread-opencode"));
 
       NodeAssert.deepEqual(runtimeMock.state.startCalls, []);
-      NodeAssert.deepEqual(
-        runtimeMock.state.abortCalls.includes("http://127.0.0.1:9999/session"),
-        true,
-      );
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, [
+        rootSessionId,
+        "ses_stop_child",
+        "ses_stop_grandchild",
+      ]);
     }),
   );
 
