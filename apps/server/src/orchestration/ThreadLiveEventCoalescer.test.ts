@@ -5,7 +5,7 @@ import {
   TurnId,
   type OrchestrationEvent,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@helmcode/contracts";
 import { it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
