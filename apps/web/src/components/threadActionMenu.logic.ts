@@ -8,6 +8,7 @@ import type { SnoozePreset } from "@helmcode/client-runtime/state/thread-settled
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "project-settings"
   | "pin"
   | "unpin"
   | "settle"
@@ -102,6 +103,7 @@ export function buildThreadActionMenuItems(
     { id: "copy-path", label: "Copy path", icon: "copy" },
     ...(state.branch ? [{ id: "copy-branch" as const, label: "Copy branch", icon: "copy" }] : []),
     { id: "copy-thread-id", label: "Copy thread ID", icon: "copy" },
+    { id: "project-settings", label: "Project settings", icon: "settings" },
     { id: "delete", label: "Delete", destructive: true, icon: "trash" },
   ];
 }
