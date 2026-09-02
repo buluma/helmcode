@@ -26,7 +26,24 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy-path", "copy-thread-id", "delete"]);
+    ).toEqual([
+      "rename",
+      "mark-unread",
+      "copy-path",
+      "copy-thread-id",
+      "project-settings",
+      "delete",
+    ]);
+  });
+
+  it("places project settings right before delete", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const deleteIndex = items.findIndex((item) => item.id === "delete");
+    expect(items[deleteIndex - 1]).toMatchObject({
+      id: "project-settings",
+      label: "Project settings",
+      icon: "settings",
+    });
   });
 
   it("includes branch items only for threads with a branch", () => {

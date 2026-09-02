@@ -1677,6 +1677,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
+            { id: "project-settings", label: "Project settings" },
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
@@ -1694,16 +1695,29 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           return;
         }
 
+        if (clicked === "project-settings") {
+          if (isMobile) setOpenMobile(false);
+          void router.navigate({
+            to: "/projects/$projectKey",
+            params: { projectKey: project.projectKey },
+          });
+          return;
+        }
+
         await actionHandlers.get(clicked)?.();
       })();
     },
     [
       copyPathToClipboard,
       handleRemoveProject,
+      isMobile,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      project.projectKey,
+      router,
+      setOpenMobile,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -2146,10 +2160,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
+          { id: "project-settings", label: "Project settings" },
           { id: "delete", label: "Delete", destructive: true, icon: "trash" },
         ],
         position,
       );
+
+      if (clicked === "project-settings") {
+        if (isMobile) setOpenMobile(false);
+        void router.navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: project.projectKey },
+        });
+        return;
+      }
 
       if (clicked === "new-thread-on-branch") {
         // Explicit branch carry-over: reuse the thread's worktree when it
@@ -2233,9 +2257,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
+      isMobile,
       markThreadUnread,
       memberProjectByScopedKey,
+      project.projectKey,
       project.workspaceRoot,
+      router,
+      setOpenMobile,
       startThreadRename,
     ],
   );

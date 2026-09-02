@@ -8,6 +8,26 @@ Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the Helm Code ser
 
 At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
 
+## Open a project in the desktop app
+
+When the Helm Code desktop app is running on the same machine, open the current directory with:
+
+```bash
+npx helmcode@nightly app
+```
+
+Pass a path to open another directory:
+
+```bash
+npx helmcode@nightly app ../my-project
+```
+
+The command adds the directory as a project when needed, focuses the desktop app, and opens a new
+thread. It does not launch the desktop app, open a browser, or start a Helm Code server. A background
+server does not count as the desktop app. The command also rejects SSH sessions because a remote
+shell cannot focus a local desktop window. The CLI package and the running desktop app must both
+include `helmcode app` support.
+
 ## Desktop App
 
 Download the latest release from

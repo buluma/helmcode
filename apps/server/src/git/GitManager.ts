@@ -601,9 +601,24 @@ export const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  const readRepositoryInstructions = (cwd: string, fileName: string) =>
+    Effect.gen(function* () {
+      const root = yield* fileSystem.realPath(cwd);
+      const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
+      if (!instructionPath.startsWith(`${root}${path.sep}`)) {
+        return "";
+      }
+      const info = yield* fileSystem.stat(instructionPath);
+      if (info.type !== "File" || info.size > FileSystem.Size(20_000)) {
+        return "";
+      }
+      return (yield* fileSystem.readFileString(instructionPath)).trim();
+    }).pipe(Effect.orElseSucceed(() => ""));
 
   const readRecentCommitSubjects = (cwd: string) =>
     gitCore
@@ -622,26 +637,51 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => []),
       );
 
-  const resolveStylePolicy = (cwd: string, style: SourceControlWritingStyleSettings) =>
+  const resolveStylePolicy = (cwd: string, settings: SourceControlTextGenerationSettings) =>
     Effect.gen(function* () {
-      switch (style.mode) {
+      switch (settings.style.mode) {
         case "conventional_commits":
           return conventionalCommitsTextGenerationPolicy;
         case "custom":
           return customTextGenerationPolicy(
-            style.customInstructions
+            settings.style.customInstructions
               ? {
-                  commitInstructions: style.customInstructions,
-                  changeRequestInstructions: style.customInstructions,
+                  commitInstructions: settings.style.customInstructions,
+                  changeRequestInstructions: settings.style.customInstructions,
                 }
               : {},
           );
         case "repo_conventions": {
           const subjects = yield* readRecentCommitSubjects(cwd);
-          if (subjects.length === 0) {
+          const agentInstructions = yield* readRepositoryInstructions(cwd, "AGENTS.md");
+          const isClaudeWriter =
+            settings.modelSelection.instanceId === "claudeAgent" ||
+            (yield* providerRegistry.getProviders).some(
+              (provider) =>
+                provider.instanceId === settings.modelSelection.instanceId &&
+                provider.driver === "claudeAgent",
+            );
+          const claudeInstructions = isClaudeWriter
+            ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
+            : "";
+          // Each source gets its own bounded budget so a near-limit AGENTS.md
+          // can never truncate away the CLAUDE.md section that follows it —
+          // the two are joined before the shared downstream 20,000-char
+          // policyInstruction limit sees the combined text.
+          const examples = [
+            ...(subjects.length > 0
+              ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
+              : []),
+            ...(agentInstructions
+              ? [`Local AGENTS.md:\n${limitContext(agentInstructions, 8_000)}`]
+              : []),
+            ...(claudeInstructions
+              ? [`Local CLAUDE.md:\n${limitContext(claudeInstructions, 8_000)}`]
+              : []),
+          ].join("\n\n");
+          if (!examples) {
             return repositoryConventionsTextGenerationPolicy;
           }
-          const examples = ["Recent commit subjects from this repository:", ...subjects].join("\n");
           return {
             ...repositoryConventionsTextGenerationPolicy,
             commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${examples}`,
@@ -843,9 +883,6 @@ export const make = Effect.gen(function* () {
           ),
       ),
     );
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
@@ -1500,7 +1537,7 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const policy = yield* resolveStylePolicy(input.cwd, input.settings.style);
+      const policy = yield* resolveStylePolicy(input.cwd, input.settings);
 
       const generated = yield* textGeneration
         .generateCommitMessage({
@@ -1686,7 +1723,7 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings.style);
+    const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.kind === "github"
         ? Option.getOrUndefined(yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute))
