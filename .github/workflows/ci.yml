@@ -145,8 +145,8 @@ jobs:
         run: |
           set -o pipefail
           vp run --filter helmcode test \
-            apps/server/src/provider/Layers/ProviderRegistry.test.ts \
-            apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts \
+            src/provider/Layers/ProviderRegistry.test.ts \
+            src/provider/Layers/ProviderInstanceRegistryLive.test.ts \
             -- --reporter=verbose 2>&1 | tee /tmp/probe.log
 
       - name: Upload probe log
