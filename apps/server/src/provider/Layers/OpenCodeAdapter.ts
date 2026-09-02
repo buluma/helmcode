@@ -256,6 +256,14 @@ interface OpenCodeSessionContext {
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
+   * Per-model context window caps, in tokens. Keyed by `"<providerID>/<modelID>"`.
+   * Populated once per session from `provider.list` so each assistant message can
+   * stamp `maxTokens` into the token-usage snapshot without re-querying the SDK.
+   * Empty when the inventory load failed — the meter then degrades to the
+   * bare-count UI it had before.
+   */
+  modelLimits: ReadonlyMap<string, number>;
+  /**
    * Cost/token/stop-reason from the active turn's assistant message, stashed
    * here because OpenCode reports them on `message.updated` while
    * turn.completed itself fires later, off a separate `session.status`
@@ -565,6 +573,7 @@ function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | und
  */
 export function openCodeTokenUsageSnapshot(
   info: AssistantMessage,
+  modelLimits?: ReadonlyMap<string, number>,
 ): ThreadTokenUsageSnapshot | undefined {
   const tokens = info.tokens as Partial<AssistantMessage["tokens"]> | undefined;
   if (!tokens || typeof tokens !== "object") {
@@ -578,12 +587,21 @@ export function openCodeTokenUsageSnapshot(
   if (usedTokens <= 0) {
     return undefined;
   }
+  const rawMaxTokens = modelLimits?.get(`${info.providerID}/${info.modelID}`);
+  // Schema is Schema.optional(PositiveInt); round defensively in case an SDK
+  // ever emits a fractional cap, and re-check positivity after rounding --
+  // a sub-1 input like 0.4 rounds to 0, which would violate PositiveInt.
+  const roundedMaxTokens =
+    typeof rawMaxTokens === "number" && rawMaxTokens > 0 ? Math.round(rawMaxTokens) : undefined;
   return {
     usedTokens,
     ...(input > 0 ? { inputTokens: input } : {}),
     ...(output > 0 ? { outputTokens: output } : {}),
     ...(reasoning > 0 ? { reasoningOutputTokens: reasoning } : {}),
     ...(cachedRead > 0 ? { cachedInputTokens: cachedRead } : {}),
+    ...(roundedMaxTokens !== undefined && roundedMaxTokens > 0
+      ? { maxTokens: roundedMaxTokens }
+      : {}),
   };
 }
 
@@ -1034,7 +1052,10 @@ export function makeOpenCodeAdapter(
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
 
-            const tokenUsage = openCodeTokenUsageSnapshot(event.properties.info);
+            const tokenUsage = openCodeTokenUsageSnapshot(
+              event.properties.info,
+              context.modelLimits,
+            );
             const totalCostUsd =
               typeof event.properties.info.cost === "number"
                 ? event.properties.info.cost
@@ -1626,11 +1647,33 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          modelLimits: new Map(),
           lastAssistantUsage: undefined,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
         sessions.set(input.threadId, context);
+        // Fire-and-forget: a slow/failing provider.list must not delay or
+        // fail session startup. The meter just shows bare counts until this
+        // resolves (or forever, if it never does).
+        yield* Effect.gen(function* () {
+          const inventory = yield* openCodeRuntime
+            .loadOpenCodeInventory(context.client)
+            .pipe(Effect.orElseSucceed(() => undefined));
+          if (!inventory) {
+            return;
+          }
+          const limits = new Map<string, number>();
+          for (const provider of inventory.providerList.all) {
+            for (const model of Object.values(provider.models)) {
+              const ctx = model.limit?.context;
+              if (typeof ctx === "number" && ctx > 0) {
+                limits.set(`${provider.id}/${model.id}`, ctx);
+              }
+            }
+          }
+          context.modelLimits = limits;
+        }).pipe(Effect.forkIn(context.sessionScope));
         yield* startEventPump(context);
 
         yield* emit({
