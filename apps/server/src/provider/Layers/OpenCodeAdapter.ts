@@ -587,16 +587,21 @@ export function openCodeTokenUsageSnapshot(
   if (usedTokens <= 0) {
     return undefined;
   }
-  const maxTokens = modelLimits?.get(`${info.providerID}/${info.modelID}`);
+  const rawMaxTokens = modelLimits?.get(`${info.providerID}/${info.modelID}`);
+  // Schema is Schema.optional(PositiveInt); round defensively in case an SDK
+  // ever emits a fractional cap, and re-check positivity after rounding --
+  // a sub-1 input like 0.4 rounds to 0, which would violate PositiveInt.
+  const roundedMaxTokens =
+    typeof rawMaxTokens === "number" && rawMaxTokens > 0 ? Math.round(rawMaxTokens) : undefined;
   return {
     usedTokens,
     ...(input > 0 ? { inputTokens: input } : {}),
     ...(output > 0 ? { outputTokens: output } : {}),
     ...(reasoning > 0 ? { reasoningOutputTokens: reasoning } : {}),
     ...(cachedRead > 0 ? { cachedInputTokens: cachedRead } : {}),
-    // Schema is Schema.optional(PositiveInt); round defensively in case an SDK
-    // ever emits a fractional cap.
-    ...(typeof maxTokens === "number" && maxTokens > 0 ? { maxTokens: Math.round(maxTokens) } : {}),
+    ...(roundedMaxTokens !== undefined && roundedMaxTokens > 0
+      ? { maxTokens: roundedMaxTokens }
+      : {}),
   };
 }
 

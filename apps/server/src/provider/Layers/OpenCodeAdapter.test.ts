@@ -1156,6 +1156,33 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         ),
         { usedTokens: 1, inputTokens: 1 },
       );
+
+      // A sub-1 fractional cap rounds to 0, which would violate the
+      // PositiveInt schema field -- must be omitted, not emitted as 0.
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot(
+          {
+            ...baseInfo,
+            cost: 0,
+            tokens: { input: 1, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          } as AssistantMessage,
+          new Map([["openai/gpt-5", 0.4]]),
+        ),
+        { usedTokens: 1, inputTokens: 1 },
+      );
+
+      // A normal positive fractional cap still rounds and stamps as expected.
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot(
+          {
+            ...baseInfo,
+            cost: 0,
+            tokens: { input: 1, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          } as AssistantMessage,
+          new Map([["openai/gpt-5", 199_999.6]]),
+        ),
+        { usedTokens: 1, inputTokens: 1, maxTokens: 200_000 },
+      );
     }),
   );
 
