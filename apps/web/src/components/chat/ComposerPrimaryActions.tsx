@@ -27,6 +27,9 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  // Shares one rotating verb with the visible footer label (ComposerFooterPrimaryActions
+  // owns the hook) so the stop button's accessible name and the visible text never disagree.
+  spinnerVerb: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -67,6 +70,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  spinnerVerb,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -80,6 +84,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
+  // Accessible-only flavor text (aria-label/title), not a visible label: the
+  // stop button is a fixed-size icon-only circle with no room to grow.
+  const stopGenerationLabel = spinnerVerb ? `Stop ${spinnerVerb.toLowerCase()}` : "Stop generation";
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <button
@@ -90,7 +97,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {...pointerFocusProps}
       onClick={onInterrupt}
-      aria-label="Stop generation"
+      aria-label={stopGenerationLabel}
+      title={stopGenerationLabel}
     >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
         <rect x="2" y="2" width="8" height="8" rx="1.5" />
