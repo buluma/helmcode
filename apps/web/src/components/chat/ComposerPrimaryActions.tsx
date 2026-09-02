@@ -2,7 +2,6 @@ import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { useSpinnerVerb } from "~/hooks/useSpinnerVerb";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -28,6 +27,9 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  // Shares one rotating verb with the visible footer label (ComposerFooterPrimaryActions
+  // owns the hook) so the stop button's accessible name and the visible text never disagree.
+  spinnerVerb: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -68,6 +70,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  spinnerVerb,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -83,7 +86,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
   // Accessible-only flavor text (aria-label/title), not a visible label: the
   // stop button is a fixed-size icon-only circle with no room to grow.
-  const spinnerVerb = useSpinnerVerb(isRunning);
   const stopGenerationLabel = spinnerVerb ? `Stop ${spinnerVerb.toLowerCase()}` : "Stop generation";
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (

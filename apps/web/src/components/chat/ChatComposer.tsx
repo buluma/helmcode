@@ -442,6 +442,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        spinnerVerb={spinnerVerb}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -2801,6 +2802,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       isPreparingWorktree={false}
                       hasSendableContent={false}
+                      spinnerVerb={null}
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
@@ -3084,6 +3086,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     isPreparingWorktree={false}
                     hasSendableContent={false}
+                    spinnerVerb={null}
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
