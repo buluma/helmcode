@@ -13,13 +13,13 @@ At least one provider CLI, installed and authenticated. See [Providers](#provide
 When the Helm Code desktop app is running on the same machine, open the current directory with:
 
 ```bash
-npx helmcode app
+npx helmcode@nightly app
 ```
 
 Pass a path to open another directory:
 
 ```bash
-npx helmcode app ../my-project
+npx helmcode@nightly app ../my-project
 ```
 
 The command adds the directory as a project when needed, focuses the desktop app, and opens a new
