@@ -664,12 +664,20 @@ export const make = Effect.gen(function* () {
           const claudeInstructions = isClaudeWriter
             ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
             : "";
+          // Each source gets its own bounded budget so a near-limit AGENTS.md
+          // can never truncate away the CLAUDE.md section that follows it —
+          // the two are joined before the shared downstream 20,000-char
+          // policyInstruction limit sees the combined text.
           const examples = [
             ...(subjects.length > 0
               ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
               : []),
-            ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
-            ...(claudeInstructions ? [`Local CLAUDE.md:\n${claudeInstructions}`] : []),
+            ...(agentInstructions
+              ? [`Local AGENTS.md:\n${limitContext(agentInstructions, 8_000)}`]
+              : []),
+            ...(claudeInstructions
+              ? [`Local CLAUDE.md:\n${limitContext(claudeInstructions, 8_000)}`]
+              : []),
           ].join("\n\n");
           if (!examples) {
             return repositoryConventionsTextGenerationPolicy;

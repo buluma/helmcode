@@ -1832,6 +1832,56 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("keeps CLAUDE.md instructions when AGENTS.md is near the truncation limit", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("helmcode-git-manager-");
+      yield* runGit(repoDir, ["init", "--initial-branch=main"]);
+      yield* runGit(repoDir, ["config", "user.email", "test@example.com"]);
+      yield* runGit(repoDir, ["config", "user.name", "Test User"]);
+      // Near the 20,000-byte per-file cap in readRepositoryInstructions, so
+      // this is the largest AGENTS.md the reader will still return in full.
+      const agentInstructions = "A".repeat(19_000);
+      const claudeInstructions = "Keep pull request bodies brief.";
+      NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), agentInstructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "CLAUDE.md"), claudeInstructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-6",
+          },
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Create initial commit", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      // A near-limit AGENTS.md must not silently swallow the CLAUDE.md
+      // section that follows it once the combined text hits the shared
+      // downstream policyInstruction truncation limit.
+      expect(generatedPolicy).toMatchObject({
+        commitInstructions: expect.stringContaining(`Local CLAUDE.md:\n${claudeInstructions}`),
+      });
+      expect(generatedPolicy).toMatchObject({
+        commitInstructions: expect.stringContaining("Local AGENTS.md:\n"),
+      });
+    }),
+  );
+
   it.effect("uses custom commit message when provided", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("helmcode-git-manager-");
