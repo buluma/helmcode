@@ -3,9 +3,11 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { beforeEach } from "vite-plus/test";
+import * as TestClock from "effect/testing/TestClock";
 
 import { OpenCodeSettings } from "@helmcode/contracts";
 import { ServerConfig } from "../../config.ts";
@@ -33,6 +35,7 @@ const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
+    runVersionPending: false,
     inventoryError: null as Error | null,
     closeCalls: 0,
     inventory: {
@@ -43,6 +46,7 @@ const runtimeMock = {
   reset() {
     this.state.runVersionError = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
+    this.state.runVersionPending = false;
     this.state.inventoryError = null;
     this.state.closeCalls = 0;
     this.state.inventory = {
@@ -74,15 +78,17 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       };
     }),
   runOpenCodeCommand: () =>
-    runtimeMock.state.runVersionError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "runOpenCodeCommand",
-            detail: runtimeMock.state.runVersionError.message,
-            cause: runtimeMock.state.runVersionError,
-          }),
-        )
-      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+    runtimeMock.state.runVersionPending
+      ? Effect.never
+      : runtimeMock.state.runVersionError
+        ? Effect.fail(
+            new OpenCodeRuntimeError({
+              operation: "runOpenCodeCommand",
+              detail: runtimeMock.state.runVersionError.message,
+              cause: runtimeMock.state.runVersionError,
+            }),
+          )
+        : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: () =>
     ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -274,3 +280,18 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 });
+
+it.effect("times out a hanging local CLI version probe", () =>
+  Effect.gen(function* () {
+    runtimeMock.state.runVersionPending = true;
+    const fiber = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd()).pipe(
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust("4 seconds");
+    const snapshot = yield* Fiber.join(fiber);
+
+    NodeAssert.equal(snapshot.status, "error");
+    NodeAssert.equal(snapshot.installed, true);
+    NodeAssert.ok(snapshot.message?.includes("version probe timed out"));
+  }).pipe(Effect.provide(Layer.mergeAll(testLayer, TestClock.layer()))),
+);

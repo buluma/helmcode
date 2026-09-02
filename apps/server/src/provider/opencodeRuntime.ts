@@ -403,12 +403,29 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
+      const runtimeScope = yield* Scope.Scope;
       const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          detached: hostPlatform !== "win32",
           shell: spawnCommand.shell,
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
+      );
+      const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
+        hostPlatform === "win32"
+          ? child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid)
+          : Effect.sync(() => {
+              try {
+                process.kill(-Number(child.pid), signal);
+              } catch {
+                // The direct child may already have exited; the process group
+                // kill is best-effort cleanup for any descendants it spawned.
+              }
+            });
+      yield* Scope.addFinalizer(
+        runtimeScope,
+        killOpenCodeProcessGroup("SIGKILL").pipe(Effect.ignore),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [collectStreamAsString(child.stdout), collectStreamAsString(child.stderr), child.exitCode],
