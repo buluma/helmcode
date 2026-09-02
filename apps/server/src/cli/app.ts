@@ -87,6 +87,8 @@ export function sendDesktopAppActivationRequest(input: {
   readonly request: DesktopAppActivationRequest;
   readonly timeoutMs?: number;
 }): Promise<DesktopAppActivationResponse> {
+  const totalTimeoutMs = input.timeoutMs ?? CLI_RESPONSE_TIMEOUT_MS;
+  const startedAt = performance.now();
   return new Promise((resolve, reject) => {
     const socket = NodeNet.createConnection(input.address);
     socket.setEncoding("utf8");
@@ -112,7 +114,7 @@ export function sendDesktopAppActivationRequest(input: {
         type: "failure",
         error: new Error("The desktop app did not respond in time."),
       });
-    }, input.timeoutMs ?? CLI_RESPONSE_TIMEOUT_MS);
+    }, totalTimeoutMs);
 
     socket.once("connect", () => {
       connected = true;
@@ -164,7 +166,7 @@ export function sendDesktopAppActivationRequest(input: {
           sendDesktopAppActivationRequest({
             address: input.fallbackAddress,
             request: input.request,
-            ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+            timeoutMs: Math.max(0, totalTimeoutMs - (performance.now() - startedAt)),
           }),
         );
         return;
