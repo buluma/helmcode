@@ -31,9 +31,11 @@ export function resolveDesktopAppControlAddress(input: {
     };
   }
 
-  const userKey =
-    input.userId === undefined ? shortHash(input.stateDir).slice(0, 12) : input.userId;
-  const directory = input.joinPath(input.tempDir, `helmcode-${userKey}`);
+  // Falls back to a slice of the already-computed state hash, not a second
+  // hash of it — not user-specific, but still unique enough to segment the
+  // temp directory when no OS uid is available (e.g. Windows, sandboxed).
+  const identityKey = input.userId === undefined ? stateHash.slice(0, 12) : input.userId;
+  const directory = input.joinPath(input.tempDir, `helmcode-${identityKey}`);
   return {
     address: input.joinPath(directory, `${stateHash}.sock`),
     directory,
