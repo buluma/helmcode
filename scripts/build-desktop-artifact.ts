@@ -633,6 +633,22 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
 ] as const;
+// node-pty ships prebuilt pty.node/spawn-helper binaries for both darwin-x64
+// and darwin-arm64 in the same package. A single-architecture mac build only
+// ever loads its own arch's prebuild, but electron-builder's static `files`
+// list has no way to know that — so the opposite-arch prebuild rides along
+// and macOS flags the arm64 app as containing Intel-only nested binaries.
+// Universal builds (and any caller that omits arch) need both, so they keep
+// prior behavior unchanged.
+export function resolveMacFileExclusions(arch: typeof BuildArch.Type): readonly string[] {
+  if (arch === "arm64") {
+    return ["!**/node_modules/node-pty/prebuilds/darwin-x64/**"];
+  }
+  if (arch === "x64") {
+    return ["!**/node_modules/node-pty/prebuilds/darwin-arm64/**"];
+  }
+  return [];
+}
 // The WSL backend launches the server with plain `wsl.exe -- node`, which
 // cannot read inside an asar archive — and the server bundle externalizes its
 // runtime deps, so the whole node_modules tree must be unpacked, not just the
@@ -1530,6 +1546,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: number | undefined,
+  arch: typeof BuildArch.Type,
   macPasskeySigning:
     | {
         readonly entitlementsPath: string;
@@ -1542,7 +1559,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Helm-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
-    files: [...DESKTOP_FILE_EXCLUSIONS],
+    files: [
+      ...DESKTOP_FILE_EXCLUSIONS,
+      ...(platform === "mac" ? resolveMacFileExclusions(arch) : []),
+    ],
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -1934,6 +1954,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.signed,
       options.mockUpdates,
       options.mockUpdateServerPort,
+      options.arch,
       macPasskeySigning && macEntitlementsPath
         ? {
             entitlementsPath: macEntitlementsPath,

@@ -37,6 +37,7 @@ import {
   resolveResourceMonitorRustTargets,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
+  resolveMacFileExclusions,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
@@ -328,6 +329,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
         false,
         undefined,
+        "universal",
         undefined,
       );
       const linux = yield* createBuildConfig(
@@ -337,6 +339,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
         false,
         undefined,
+        "x64",
         undefined,
       );
       const win = yield* createBuildConfig(
@@ -346,6 +349,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
         false,
         undefined,
+        "x64",
         undefined,
       );
 
@@ -524,12 +528,78 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(error.message, secret);
   });
 
+  it("excludes only the opposite-architecture Darwin node-pty prebuild for single-arch mac builds", () => {
+    assert.deepStrictEqual(resolveMacFileExclusions("arm64"), [
+      "!**/node_modules/node-pty/prebuilds/darwin-x64/**",
+    ]);
+    assert.deepStrictEqual(resolveMacFileExclusions("x64"), [
+      "!**/node_modules/node-pty/prebuilds/darwin-arm64/**",
+    ]);
+    assert.deepStrictEqual(resolveMacFileExclusions("universal"), []);
+  });
+
+  it.effect(
+    "threads the mac node-pty exclusion into the build config's files list, arch-scoped",
+    () =>
+      Effect.gen(function* () {
+        const arm64 = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          "arm64",
+          undefined,
+        );
+        const x64 = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          "x64",
+          undefined,
+        );
+        const universal = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          "universal",
+          undefined,
+        );
+
+        assert.deepStrictEqual(arm64.files, [
+          ...DESKTOP_FILE_EXCLUSIONS,
+          "!**/node_modules/node-pty/prebuilds/darwin-x64/**",
+        ]);
+        assert.deepStrictEqual(x64.files, [
+          ...DESKTOP_FILE_EXCLUSIONS,
+          "!**/node_modules/node-pty/prebuilds/darwin-arm64/**",
+        ]);
+        assert.deepStrictEqual(universal.files, DESKTOP_FILE_EXCLUSIONS);
+      }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
     Effect.gen(function* () {
-      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
-        entitlementsPath: "/tmp/entitlements.mac.plist",
-        provisioningProfilePath: "/tmp/helmcode.provisionprofile",
-      });
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        true,
+        false,
+        undefined,
+        "universal",
+        {
+          entitlementsPath: "/tmp/entitlements.mac.plist",
+          provisioningProfilePath: "/tmp/helmcode.provisionprofile",
+        },
+      );
 
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.helmcode.helmcode");
@@ -550,6 +620,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
         false,
         undefined,
+        "x64",
         undefined,
       );
 
