@@ -225,6 +225,7 @@ import {
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSpinnerVerb } from "../../hooks/useSpinnerVerb";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const runtimeModeConfig: Record<
@@ -411,6 +412,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
 }) {
+  // Only while actually running and not already showing the worktree-prep
+  // label, so the two never compete for the same slot.
+  const spinnerVerb = useSpinnerVerb(props.isRunning && !props.isPreparingWorktree);
   return (
     <>
       {props.activeContextWindow ? (
@@ -421,6 +425,10 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-secondary-label text-xs">Preparing worktree...</span>
+      ) : spinnerVerb ? (
+        <span aria-hidden="true" className="text-secondary-label text-xs">
+          {spinnerVerb}...
+        </span>
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
