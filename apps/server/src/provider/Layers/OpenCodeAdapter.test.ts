@@ -1104,6 +1104,58 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         } as AssistantMessage),
         undefined,
       );
+
+      const limits = new Map([
+        ["openai/gpt-5", 200_000],
+        ["anthropic/claude-sonnet-5", 1_000_000],
+      ]);
+
+      // A matching provider/model key stamps maxTokens into the snapshot.
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot(
+          {
+            ...baseInfo,
+            cost: 0.0042,
+            tokens: { input: 100, output: 40, reasoning: 10, cache: { read: 5, write: 0 } },
+          } as AssistantMessage,
+          limits,
+        ),
+        {
+          usedTokens: 150,
+          inputTokens: 100,
+          outputTokens: 40,
+          reasoningOutputTokens: 10,
+          cachedInputTokens: 5,
+          maxTokens: 200_000,
+        },
+      );
+
+      // Unknown provider/model -- no maxTokens even though the map has other entries.
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot(
+          {
+            ...baseInfo,
+            modelID: "gpt-5-mini",
+            cost: 0,
+            tokens: { input: 1, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          } as AssistantMessage,
+          limits,
+        ),
+        { usedTokens: 1, inputTokens: 1 },
+      );
+
+      // Zero/negative entries in the map are ignored -- the schema field is a PositiveInt.
+      NodeAssert.deepEqual(
+        openCodeTokenUsageSnapshot(
+          {
+            ...baseInfo,
+            cost: 0,
+            tokens: { input: 1, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          } as AssistantMessage,
+          new Map([["openai/gpt-5", 0]]),
+        ),
+        { usedTokens: 1, inputTokens: 1 },
+      );
     }),
   );
 
