@@ -595,6 +595,37 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("does not fabricate a role on a metadata update with no role signal", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 1)).pipe(
+        Effect.forkChild,
+      );
+
+      // No agentPath and no explicit role: fillMetadata downstream overwrites
+      // an existing real role whenever this field is present, so a
+      // synthesized "general-purpose" here would stomp it.
+      yield* runtime.emit({
+        id: asEventId("evt-metadata-no-role-signal"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/metadataUpdated",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          agentThreadId: "child-no-role-signal",
+          model: "gpt-5.6-sol",
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const payload = events[0]?.payload as Record<string, unknown>;
+      NodeAssert.equal(payload.model, "gpt-5.6-sol");
+      NodeAssert.equal("role" in payload, false);
+    }),
+  );
+
   it.effect("does not reactivate an idle child after a parent interaction", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

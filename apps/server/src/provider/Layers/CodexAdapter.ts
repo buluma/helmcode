@@ -522,8 +522,11 @@ function mapCollabAgentEvent(
   const agentPath = typeof payload.agentPath === "string" ? payload.agentPath : undefined;
   const pathLeaf = agentPath?.split("/").findLast((segment) => segment.length > 0);
   const nickname = typeof payload.nickname === "string" ? payload.nickname : undefined;
-  const role =
-    (typeof payload.role === "string" ? payload.role : undefined) ?? pathLeaf ?? "general-purpose";
+  // Undefined when this event carries no real role signal — distinct from
+  // `role` below, which always has a value for events (started, activity)
+  // that need one to seed a brand-new row.
+  const explicitRole = typeof payload.role === "string" ? payload.role : pathLeaf;
+  const role = explicitRole ?? "general-purpose";
   // A bare thread id is not a name. Omitting the title lets the client fold
   // keep the real one from task.started instead of clobbering it (probe
   // finding: progress rows renamed math_one to its UUID).
@@ -533,15 +536,17 @@ function mapCollabAgentEvent(
   const effort = typeof payload.effort === "string" ? payload.effort.trim() : "";
   // Identity repeated on every status patch so rows are self-describing when
   // the start row ages out of activity retention (review finding: a
-  // reconstructed agent had a UUID name and no role/path).
-  const linkage = {
-    role,
+  // reconstructed agent had a UUID name and no role/path). Kept separate from
+  // `role` so a metadata-only update can omit it entirely when this event
+  // carries no real role signal.
+  const identityWithoutRole = {
     ...(knownName ? { title: knownName } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     ...(agentPath ? { agentPath } : {}),
     timelineBypass: true,
   } as const;
+  const linkage = { role, ...identityWithoutRole } as const;
 
   switch (event.method) {
     case "collabAgent/started":
@@ -565,7 +570,15 @@ function mapCollabAgentEvent(
         {
           ...base,
           type: "task.updated",
-          payload: { taskId, ...linkage },
+          // Metadata-only updates must not fabricate a role: fillMetadata
+          // downstream overwrites any existing role whenever this field is
+          // present, so a synthesized "general-purpose" here would stomp a
+          // real role a prior event already set.
+          payload: {
+            taskId,
+            ...identityWithoutRole,
+            ...(explicitRole ? { role: explicitRole } : {}),
+          },
         },
       ];
     case "collabAgent/activity": {
