@@ -7,10 +7,10 @@ import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import {
-  AntigravityIcon,
   CursorIcon,
   Icon,
   KiroIcon,
+  PulsarIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -87,9 +87,9 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       kind: "brand",
     },
     {
-      label: "Antigravity",
-      Icon: AntigravityIcon,
-      value: "antigravity",
+      label: "Pulsar",
+      Icon: PulsarIcon,
+      value: "pulsar",
       kind: "brand",
     },
     {
