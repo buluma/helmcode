@@ -6,7 +6,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import { createModelCapabilities } from "@helmcode/shared/model";
@@ -31,10 +30,9 @@ const OPENCODE_PRESENTATION = {
   supportsMultiAgentWorkflow: false,
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
-const OPENCODE_VERSION_PROBE_TIMEOUT = 4_000;
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
-  readonly cause?: unknown;
+  readonly cause: unknown;
   readonly detail: string;
 }> {}
 
@@ -350,27 +348,18 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
 
   let version: string | null = null;
   if (!isExternalServer) {
-    const versionProbe = openCodeRuntime
-      .runOpenCodeCommand({
-        binaryPath: openCodeSettings.binaryPath,
-        args: ["--version"],
-        environment: resolvedEnvironment,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-        ),
-      );
     const versionExit = yield* Effect.exit(
-      Effect.timeoutOrElse(versionProbe, {
-        duration: Duration.millis(OPENCODE_VERSION_PROBE_TIMEOUT),
-        orElse: () =>
-          Effect.fail(
-            new OpenCodeProbeError({
-              detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT} ms.`,
-            }),
+      openCodeRuntime
+        .runOpenCodeCommand({
+          binaryPath: openCodeSettings.binaryPath,
+          args: ["--version"],
+          environment: resolvedEnvironment,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
           ),
-      }),
+        ),
     );
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
