@@ -1,3 +1,4 @@
+import { DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION } from "@helmcode/contracts";
 import type {
   DesktopAppActivationFailure,
   DesktopAppActivationRequest,
@@ -41,7 +42,7 @@ function failure(
   code: DesktopAppActivationFailure["code"],
   message: string,
 ): DesktopAppActivationFailure {
-  return { version: 1, requestId, ok: false, code, message };
+  return { version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION, requestId, ok: false, code, message };
 }
 
 export function desktopPlatformToEnvironmentOs(
@@ -103,7 +104,7 @@ export async function handleDesktopAppActivationRequest(
       );
     }
     return {
-      version: 1,
+      version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
       requestId: request.requestId,
       ok: true,
       projectId,
