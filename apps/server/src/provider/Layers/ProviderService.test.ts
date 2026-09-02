@@ -271,7 +271,11 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
-function makeProviderServiceLayer() {
+function makeProviderServiceLayer(
+  input: {
+    readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+  } = {},
+) {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
@@ -288,7 +292,10 @@ function makeProviderServiceLayer() {
   const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
-  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const directoryLayer =
+    input.directory === undefined
+      ? ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))
+      : Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, input.directory);
 
   const layer = it.layer(
     Layer.mergeAll(
@@ -1957,5 +1964,139 @@ validation.layer("ProviderServiceLive validation", (it) => {
         assert.equal(runtime.value.threadId, session.threadId);
       }
     }),
+  );
+});
+
+const activeSessionThreadId = asThreadId("thread-active-session");
+const historicalSessionThreadId = asThreadId("thread-historical-session");
+const listThreadIds = vi.fn(() =>
+  Effect.succeed([activeSessionThreadId, historicalSessionThreadId]),
+);
+const getBinding = vi.fn((threadId: ThreadId) =>
+  Effect.succeed(
+    Option.some({
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+    }),
+  ),
+);
+const boundedListing = makeProviderServiceLayer({
+  directory: {
+    upsert: () => Effect.void,
+    getProvider: () => Effect.die("ProviderService.listSessions does not use getProvider"),
+    getBinding,
+    listThreadIds,
+    listBindings: () => Effect.die("ProviderService.listSessions does not use listBindings"),
+  },
+});
+
+boundedListing.layer("ProviderServiceLive session listing", (it) => {
+  it.effect("looks up bindings for active sessions without scanning historical threads", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* boundedListing.codex.startSession({
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: activeSessionThreadId,
+        cwd: "/tmp/project-active-session",
+        runtimeMode: "full-access",
+      });
+      listThreadIds.mockClear();
+      getBinding.mockClear();
+
+      const sessions = yield* provider.listSessions();
+
+      assert.equal(sessions.length, 1);
+      assert.equal(listThreadIds.mock.calls.length, 0);
+      assert.deepEqual(getBinding.mock.calls, [[activeSessionThreadId]]);
+    }),
+  );
+});
+
+describe("agent browser access", () => {
+  const revokedThreads: Array<ThreadId> = [];
+
+  const startSessionWith = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const issued: Array<ThreadId> = [];
+      const codex = makeFakeCodexAdapter();
+      const providerAdapterLayer = Layer.succeed(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+      );
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive({
+        issueMcpCredential: (request) =>
+          Effect.sync(() => {
+            issued.push(request.threadId);
+            return undefined;
+          }),
+        revokeMcpCredential: (revoked) => Effect.sync(() => void revokedThreads.push(revoked)),
+      }).pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableAgentBrowserAccess })),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        return yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+      }).pipe(Effect.provide(providerLayer));
+
+      return issued;
+    });
+
+  // Credential issuance is the observable that matters: it is the only place a
+  // credential is minted, and `/mcp` accepts nothing else, so withholding it is
+  // what actually denies every provider and external MCP client.
+  it.effect("requests no MCP credential when agent browser access is off", () =>
+    Effect.gen(function* () {
+      const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
+
+      assert.deepEqual(issued, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("revokes an already-issued credential when access is off", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-revoke");
+      revokedThreads.length = 0;
+
+      yield* startSessionWith(false, threadId);
+
+      // Clearing the in-memory map is not enough: a token issued before the
+      // toggle flipped stays valid against `/mcp` for its whole liveness
+      // window, and later turns refresh it.
+      assert.deepEqual(revokedThreads, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requests an MCP credential when agent browser access is on", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-on");
+
+      const issued = yield* startSessionWith(true, threadId);
+
+      assert.deepEqual(issued, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
