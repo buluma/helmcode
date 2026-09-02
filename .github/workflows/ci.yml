@@ -117,14 +117,21 @@ jobs:
       - name: Test
         run: vp run --filter helmcode test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
-  # THROWAWAY: isolates the two real-subprocess-spawning ProviderRegistry
-  # suites to find out whether PR #48's opencodeRuntime.ts change (detached
-  # spawn + process-group kill finalizer) is what's hanging "Test Server 2"
-  # on every run since. Delete this job once the probe answers that.
+  # THROWAWAY: isolates each real-subprocess-spawning ProviderRegistry suite
+  # on its own runner, one file per job, to find out which one (and where in
+  # it) is hanging "Test Server 2" on every run since PR #48's
+  # opencodeRuntime.ts change (detached spawn + process-group kill
+  # finalizer). Delete these jobs once the probe answers that.
   probe_opencode_hang:
-    name: Probe OpenCode Hang
+    name: Probe OpenCode Hang (${{ matrix.file }})
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - ProviderRegistry
+          - ProviderInstanceRegistryLive
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -141,19 +148,22 @@ jobs:
           cache: true
           run-install: true
 
+      # Wrapped in a shell-level `timeout` (shorter than the job's own
+      # timeout-minutes) so the step exits cleanly instead of getting
+      # hard-killed — a hard kill drops the log entirely, per prior runs.
       - name: Probe
         run: |
           set -o pipefail
-          vp run --filter helmcode test \
-            src/provider/Layers/ProviderRegistry.test.ts \
-            src/provider/Layers/ProviderInstanceRegistryLive.test.ts \
+          timeout --signal=TERM 300 vp run --filter helmcode test \
+            src/provider/Layers/${{ matrix.file }}.test.ts \
             -- --reporter=verbose 2>&1 | tee /tmp/probe.log
+          echo "probe exited with ${PIPESTATUS[0]}" | tee -a /tmp/probe.log
 
       - name: Upload probe log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: probe-log
+          name: probe-log-${{ matrix.file }}
           path: /tmp/probe.log
           if-no-files-found: ignore
 
