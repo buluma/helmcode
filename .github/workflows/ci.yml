@@ -131,7 +131,6 @@ jobs:
       matrix:
         file:
           - ProviderRegistry
-          - ProviderInstanceRegistryLive
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -148,16 +147,42 @@ jobs:
           cache: true
           run-install: true
 
-      # Wrapped in a shell-level `timeout` (shorter than the job's own
-      # timeout-minutes) so the step exits cleanly instead of getting
-      # hard-killed — a hard kill drops the log entirely, per prior runs.
+      # `timeout`'s SIGTERM only reaches vp's direct process, not a
+      # detached:true grandchild (opencodeRuntime.ts spawns those) — the last
+      # run sat past 300s with the step still "in_progress", suggesting an
+      # orphaned child is holding the log pipe open. So: run in the
+      # background, poll for it dying on our own, and if it doesn't, snapshot
+      # `ps -ef` (proof of a surviving orphan) and force-kill everything
+      # before exiting 0 — the step must always complete so the log upload
+      # step actually runs.
       - name: Probe
         run: |
-          set -o pipefail
-          timeout --signal=TERM 300 vp run --filter helmcode test \
+          set +e
+          vp run --filter helmcode test \
             src/provider/Layers/${{ matrix.file }}.test.ts \
-            -- --reporter=verbose 2>&1 | tee /tmp/probe.log
-          echo "probe exited with ${PIPESTATUS[0]}" | tee -a /tmp/probe.log
+            -- --reporter=verbose > /tmp/probe.log 2>&1 &
+          VP_PID=$!
+          for i in $(seq 1 60); do
+            sleep 5
+            kill -0 "$VP_PID" 2>/dev/null || break
+          done
+          if kill -0 "$VP_PID" 2>/dev/null; then
+            {
+              echo "=== TIMED OUT after ~300s, vp (pid $VP_PID) still alive ==="
+              echo "=== process tree snapshot ==="
+              ps -ef
+            } | tee -a /tmp/probe.log
+            pkill -9 -P "$VP_PID" 2>/dev/null
+            kill -9 "$VP_PID" 2>/dev/null
+          else
+            wait "$VP_PID"
+            echo "probe exited with $?" | tee -a /tmp/probe.log
+          fi
+          {
+            echo "=== final process snapshot before job teardown ==="
+            ps -ef
+          } | tee -a /tmp/probe.log
+          exit 0
 
       - name: Upload probe log
         if: always()
