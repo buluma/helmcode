@@ -11,6 +11,7 @@ import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
 import {
   type ArchiveThreadInput,
+  type CancelThreadScheduleInput,
   type CreateThreadInput,
   type DeleteThreadInput,
   type InterruptThreadTurnInput,
@@ -19,6 +20,7 @@ import {
   type RevertThreadCheckpointInput,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
+  type ScheduleThreadInput,
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type SettleThreadInput,
@@ -31,6 +33,7 @@ import {
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
+  cancelThreadSchedule,
   createThread,
   deleteThread,
   interruptThreadTurn,
@@ -39,6 +42,7 @@ import {
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
+  scheduleThread,
   pinThread,
   reorderPinnedThread,
   settleThread,
@@ -55,6 +59,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
   ArchiveThreadInput,
+  CancelThreadScheduleInput,
   CreateThreadInput,
   DeleteThreadInput,
   InterruptThreadTurnInput,
@@ -63,6 +68,7 @@ export type {
   RevertThreadCheckpointInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
+  ScheduleThreadInput,
   PinThreadInput,
   ReorderPinnedThreadInput,
   SettleThreadInput,
@@ -182,6 +188,26 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:unsnooze",
       execute: requireCapability("threadSnooze", "thread.unsnooze", (input: UnsnoozeThreadInput) =>
         unsnoozeThread(input),
+      ),
+      scheduler,
+      concurrency,
+    }),
+    schedule: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:schedule",
+      execute: requireCapability(
+        "threadScheduling",
+        "thread.schedule.create",
+        (input: ScheduleThreadInput) => scheduleThread(input),
+      ),
+      scheduler,
+      concurrency,
+    }),
+    cancelSchedule: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:cancel-schedule",
+      execute: requireCapability(
+        "threadScheduling",
+        "thread.schedule.cancel",
+        (input: CancelThreadScheduleInput) => cancelThreadSchedule(input),
       ),
       scheduler,
       concurrency,
