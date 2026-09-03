@@ -424,6 +424,23 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+export const ThreadSchedule = Schema.Struct({
+  enabled: Schema.Boolean,
+  /** ISO 8601 RRULE string (e.g., "FREQ=DAILY;BYHOUR=9;BYMINUTE=0") or null for interval-only. */
+  cron: Schema.NullOr(TrimmedNonEmptyString),
+  /** Interval in milliseconds for simple "every N minutes" schedules. Null when cron is set. */
+  intervalMs: Schema.NullOr(Schema.Number),
+  /** The prompt to send on each scheduled run. */
+  prompt: TrimmedNonEmptyString,
+  /** When the next run should fire. */
+  nextRunAt: IsoDateTime,
+  /** When the schedule was created. */
+  createdAt: IsoDateTime,
+  /** Optional model override for scheduled runs. */
+  modelSelection: Schema.optional(ModelSelection),
+});
+export type ThreadSchedule = typeof ThreadSchedule.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -460,6 +477,9 @@ export const OrchestrationThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // Scheduled task configuration. Optional so payloads from pre-automation
+  // servers still decode.
+  schedule: Schema.optional(Schema.NullOr(ThreadSchedule)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -518,6 +538,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  schedule: Schema.optional(Schema.NullOr(ThreadSchedule)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -784,6 +805,19 @@ const ThreadUnsnoozeCommand = Schema.Struct({
   reason: Schema.Literal("user"),
 });
 
+const ThreadScheduleCreateCommand = Schema.Struct({
+  type: Schema.Literal("thread.schedule.create"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  schedule: ThreadSchedule,
+});
+
+const ThreadScheduleCancelCommand = Schema.Struct({
+  type: Schema.Literal("thread.schedule.cancel"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
 const ThreadPinCommand = Schema.Struct({
   type: Schema.Literal("thread.pin"),
   commandId: CommandId,
@@ -970,6 +1004,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
+  ThreadScheduleCreateCommand,
+  ThreadScheduleCancelCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
@@ -998,6 +1034,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
+  ThreadScheduleCreateCommand,
+  ThreadScheduleCancelCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
@@ -1122,6 +1160,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unsettled",
   "thread.snoozed",
   "thread.unsnoozed",
+  "thread.scheduled",
+  "thread.unscheduled",
   "thread.pinned",
   "thread.unpinned",
   "thread.pin-reordered",
@@ -1234,6 +1274,17 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
   // thread.unsettled's activity resets. Timer wakes emit no event: clients
   // derive them from snoozedUntil passing.
   reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadScheduledPayload = Schema.Struct({
+  threadId: ThreadId,
+  schedule: ThreadSchedule,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadUnscheduledPayload = Schema.Struct({
+  threadId: ThreadId,
   updatedAt: IsoDateTime,
 });
 
@@ -1453,6 +1504,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unsnoozed"),
     payload: ThreadUnsnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.scheduled"),
+    payload: ThreadScheduledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.unscheduled"),
+    payload: ThreadUnscheduledPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
