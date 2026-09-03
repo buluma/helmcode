@@ -908,6 +908,14 @@ function renderFeedEntry(
       !assistantTurnStillInProgress &&
       !message.streaming;
 
+    // Skip empty messages — no text and no renderable (image) attachments.
+    // Mobile doesn't render file attachments yet, so a message with only a
+    // file and no text would otherwise show up as an orphaned empty bubble
+    // and break adjacent activity-group merging.
+    if (message.text.trim().length === 0 && attachments.length === 0) {
+      return null;
+    }
+
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       return (
@@ -964,12 +972,6 @@ function renderFeedEntry(
           </View>
         </Animated.View>
       );
-    }
-
-    // Skip empty assistant messages (no text, no attachments) — they would
-    // render as an orphaned timestamp and break adjacent activity-group merging.
-    if (message.text.trim().length === 0 && attachments.length === 0) {
-      return null;
     }
 
     const enterAnimated = isFreshTimestamp(message.createdAt);

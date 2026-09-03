@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
@@ -257,7 +258,14 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           return persistedAttachment;
         }),
       { concurrency: 1 },
-    ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
+    ).pipe(
+      // onExit, not tapError: a dropped connection interrupts this fiber
+      // mid-claim rather than failing it, and tapError only fires on the
+      // typed Fail channel — it would miss that case and leak the copy.
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) ? removeClaimedAttachmentPaths(claimedAttachmentPaths) : Effect.void,
+      ),
+    );
 
     return {
       ...canonicalCommand,

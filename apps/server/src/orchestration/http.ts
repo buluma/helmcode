@@ -4,6 +4,7 @@ import {
   EnvironmentHttpApi,
 } from "@helmcode/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -97,8 +98,14 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
           return yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
-            Effect.tapError(() =>
-              cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
+            // onExit, not tapError: a dropped connection interrupts this
+            // fiber rather than failing it, and tapError only fires on the
+            // typed Fail channel — it would miss that case and leak the
+            // claimed attachment copy.
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit)
+                ? cleanupFailedUploadedAttachments(args.payload, normalizedCommand)
+                : Effect.void,
             ),
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_dispatch_failed", cause),

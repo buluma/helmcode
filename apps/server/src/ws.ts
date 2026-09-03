@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -1088,7 +1089,15 @@ const makeWsRpcLayer = (
                   )
                 : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
-                Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+                // onExit, not tapError: a dropped connection interrupts this
+                // fiber rather than failing it, and tapError only fires on
+                // the typed Fail channel — it would miss that case and leak
+                // the claimed attachment copy.
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit)
+                    ? cleanupFailedUploadedAttachments(command, normalizedCommand)
+                    : Effect.void,
+                ),
               );
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
