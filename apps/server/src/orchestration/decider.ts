@@ -24,6 +24,20 @@ import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+// The RRULE subset ScheduleReactor.computeNextRunAt actually understands
+// (apps/server/src/orchestration/Layers/ScheduleReactor.ts): FREQ is
+// required and must be one of the four listed frequencies; BYHOUR, BYMINUTE
+// and BYDAY are optional. Anything outside this subset silently falls back
+// to "+1 hour" there with no signal to the caller, so it is rejected here
+// instead. Keep this in sync with ScheduleReactor's RRULE_* patterns.
+const SUPPORTED_RRULE_PATTERN =
+  /^(?:FREQ=(?:DAILY|WEEKLY|MONTHLY|HOURLY)|BYHOUR=(?:[01]?\d|2[0-3])|BYMINUTE=(?:[0-5]?\d)|BYDAY=(?:MO|TU|WE|TH|FR|SA|SU))(?:;(?:FREQ=(?:DAILY|WEEKLY|MONTHLY|HOURLY)|BYHOUR=(?:[01]?\d|2[0-3])|BYMINUTE=(?:[0-5]?\d)|BYDAY=(?:MO|TU|WE|TH|FR|SA|SU)))*$/;
+
+function isSupportedRruleCron(cron: string): boolean {
+  const upper = cron.toUpperCase();
+  return SUPPORTED_RRULE_PATTERN.test(upper) && /(?:^|;)FREQ=/.test(upper);
+}
+
 // Session adoption takes seconds; a user message still unadopted after this
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
@@ -654,11 +668,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const occurredAt = yield* nowIso;
       const { schedule } = command;
-      // Validate: at least one of cron or intervalMs must be set.
+      // Validate: cron and intervalMs are mutually exclusive cadences — exactly
+      // one must be set. ScheduleReactor.computeNextRunAt otherwise silently
+      // prefers intervalMs, leaving a supplied cron dead and unreported.
       if (schedule.cron == null && schedule.intervalMs == null) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `thread ${command.threadId} schedule must have at least one of cron or intervalMs`,
+        });
+      }
+      if (schedule.cron != null && schedule.intervalMs != null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} schedule must not set both cron and intervalMs`,
+        });
+      }
+      // Validate: intervalMs, when set, must be strictly positive.
+      if (schedule.intervalMs != null && !(schedule.intervalMs > 0)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} schedule intervalMs ${schedule.intervalMs} must be positive`,
+        });
+      }
+      // Validate: cron, when set, must match the RRULE subset ScheduleReactor
+      // actually supports (FREQ=DAILY|WEEKLY|MONTHLY|HOURLY, optional
+      // BYHOUR/BYMINUTE/BYDAY) — anything else silently falls back to +1h
+      // there with no signal to the caller.
+      if (schedule.cron != null && !isSupportedRruleCron(schedule.cron)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} schedule cron "${schedule.cron}" is not a supported RRULE (expected FREQ=DAILY|WEEKLY|MONTHLY|HOURLY with optional BYHOUR/BYMINUTE/BYDAY)`,
         });
       }
       // Validate: prompt must be non-empty (schema guarantees this, but be safe).
@@ -692,13 +731,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.schedule.cancel": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      // Idempotent: cancelling a schedule that doesn't exist is a no-op.
+      // Idempotent: cancelling a schedule that doesn't exist is a no-op, so
+      // updatedAt is only bumped when a schedule is actually cleared.
+      const alreadyUnscheduled = thread.schedule == null;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -709,7 +750,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.unscheduled",
         payload: {
           threadId: command.threadId,
-          updatedAt: occurredAt,
+          updatedAt: alreadyUnscheduled ? thread.updatedAt : occurredAt,
         },
       };
     }
