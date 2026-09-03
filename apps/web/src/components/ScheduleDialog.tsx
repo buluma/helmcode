@@ -1,3 +1,8 @@
+import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@helmcode/client-runtime/state/runtime";
 import type { ModelSelection, ScopedThreadRef, ThreadSchedule } from "@helmcode/contracts";
 import { createModelSelection } from "@helmcode/shared/model";
 import { useAtomValue } from "@effect/atom-react";
@@ -34,7 +39,10 @@ interface ScheduleDialogProps {
   threadRef: ScopedThreadRef;
   open: boolean;
   onClose: () => void;
-  onSave: (threadRef: ScopedThreadRef, schedule: ThreadSchedule) => Promise<unknown>;
+  onSave: (
+    threadRef: ScopedThreadRef,
+    schedule: ThreadSchedule,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
 }
 
 type ScheduleMode = "interval" | "cron";
@@ -114,7 +122,11 @@ export function ScheduleDialog({ threadRef, open, onClose, onSave }: ScheduleDia
     setSaving(true);
     setError(null);
     try {
-      await onSave(threadRef, schedule);
+      const result = await onSave(threadRef, schedule);
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        throw squashAtomCommandFailure(result);
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save schedule.");

@@ -38,10 +38,24 @@ describe("computeNextRunAt", () => {
     expect(computeNextRunAt("interval", -5, "", now)).toBe("2026-09-04T12:01:00.000Z");
   });
 
-  it("HOURLY cron fires exactly 1 hour from now regardless of BYHOUR/BYMINUTE", () => {
+  it("HOURLY cron with no BYMINUTE defaults to :00, rolling to the next hour", () => {
     const now = new Date("2026-09-04T12:34:00.000Z");
-    const nextRunAt = computeNextRunAt("cron", 60, "FREQ=HOURLY;BYHOUR=9;BYMINUTE=0", now);
-    expect(nextRunAt).toBe("2026-09-04T13:34:00.000Z");
+    const nextRunAt = computeNextRunAt("cron", 60, "FREQ=HOURLY", now);
+    expect(nextRunAt).toBe("2026-09-04T13:00:00.000Z");
+  });
+
+  it("HOURLY cron respects BYMINUTE, ignoring BYHOUR", () => {
+    const now = new Date("2026-09-04T12:10:00.000Z");
+    const nextRunAt = computeNextRunAt("cron", 60, "FREQ=HOURLY;BYHOUR=9;BYMINUTE=30", now);
+    expect(nextRunAt).toBe("2026-09-04T12:30:00.000Z");
+
+    const wrapped = computeNextRunAt(
+      "cron",
+      60,
+      "FREQ=HOURLY;BYHOUR=9;BYMINUTE=30",
+      new Date("2026-09-04T12:45:00.000Z"),
+    );
+    expect(wrapped).toBe("2026-09-04T13:30:00.000Z");
   });
 
   it("DAILY cron rolls to today's target UTC time when it hasn't passed yet", () => {
@@ -84,10 +98,10 @@ describe("computeNextRunAt", () => {
     expect(nextRunAt).toBe("2026-09-07T09:00:00.000Z");
   });
 
-  it("MONTHLY cron behaves like DAILY (advances one day if the time passed)", () => {
+  it("MONTHLY cron advances a calendar month once the target time has passed", () => {
     const now = new Date("2026-09-04T10:00:00.000Z");
     const nextRunAt = computeNextRunAt("cron", 60, "FREQ=MONTHLY;BYHOUR=9;BYMINUTE=0", now);
-    expect(nextRunAt).toBe("2026-09-05T09:00:00.000Z");
+    expect(nextRunAt).toBe("2026-10-04T09:00:00.000Z");
   });
 
   it("with no recognizable FREQ, treats it like a daily run at the current UTC time", () => {

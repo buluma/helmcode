@@ -46,7 +46,14 @@ export function computeNextRunAt(
   const upper = cron.toUpperCase();
   const freq = /FREQ=(DAILY|WEEKLY|MONTHLY|HOURLY)/.exec(upper)?.[1];
   if (freq === "HOURLY") {
-    return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    // "Every hour at :BYMINUTE" (default :00), not a flat +1h from now.
+    const targetMinute = Number(/BYMINUTE=(\d+)/.exec(upper)?.[1] ?? 0);
+    const next = new Date(now);
+    next.setUTCMinutes(targetMinute, 0, 0);
+    if (next.getTime() <= now.getTime()) {
+      next.setUTCHours(next.getUTCHours() + 1);
+    }
+    return next.toISOString();
   }
   // Read/write in UTC (not local time) to match the server's
   // ScheduleReactor.computeNextRunAt, which uses DateTime.getPartUtc.
@@ -65,8 +72,12 @@ export function computeNextRunAt(
     if (daysAhead === 0 && next.getTime() <= now.getTime()) daysAhead = 7;
     next.setUTCDate(next.getUTCDate() + daysAhead);
   } else if (next.getTime() <= now.getTime()) {
-    // DAILY or MONTHLY: advance to the next period.
-    next.setUTCDate(next.getUTCDate() + 1);
+    // DAILY advances a day; MONTHLY advances a calendar month.
+    if (freq === "MONTHLY") {
+      next.setUTCMonth(next.getUTCMonth() + 1);
+    } else {
+      next.setUTCDate(next.getUTCDate() + 1);
+    }
   }
   return next.toISOString();
 }
