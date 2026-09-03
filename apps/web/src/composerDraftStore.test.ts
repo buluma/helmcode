@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
@@ -60,11 +61,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  composerFileNeedsReattach,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
+  type ComposerFileAttachment,
   type ComposerImageAttachment,
   useComposerDraftStore,
   DraftId,
@@ -100,6 +103,18 @@ function makeImage(input: {
     mimeType,
     sizeBytes: file.size,
     previewUrl: input.previewUrl,
+    file,
+  };
+}
+
+function makeFile(id: string): ComposerFileAttachment {
+  const file = new File(["report"], "report.pdf", { type: "application/pdf" });
+  return {
+    type: "file",
+    id,
+    name: file.name,
+    mimeType: file.type,
+    sizeBytes: file.size,
     file,
   };
 }
@@ -254,6 +269,291 @@ describe("composerDraftStore addImages", () => {
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft?.images.map((image) => image.id)).toEqual(["img-shared"]);
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared");
+  });
+});
+
+describe("composerDraftStore file attachments", () => {
+  const threadId = ThreadId.make("thread-files");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("persists uploaded file references without including file contents", () => {
+    const store = useComposerDraftStore.getState();
+    store.addFiles(threadRef, [makeFile("file-1")]);
+    store.setFileUpload(threadRef, "file-1", TEST_ENVIRONMENT_ID, "pending-report-pdf");
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const options = persistApi.getOptions();
+    const persisted = options.partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey: Record<string, { files?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(persisted.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.files).toEqual(
+      [
+        {
+          id: "file-1",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 6,
+          attachmentId: "pending-report-pdf",
+          environmentId: TEST_ENVIRONMENT_ID,
+        },
+      ],
+    );
+
+    const hydrated = options.merge(persisted, useComposerDraftStore.getState());
+    expect(hydrated.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.files).toEqual([
+      {
+        type: "file",
+        id: "file-1",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 6,
+        file: null,
+        uploadedAttachmentId: "pending-report-pdf",
+        uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+      },
+    ]);
+  });
+
+  it("persists a pending file as a needs-reattach marker instead of dropping it", () => {
+    const store = useComposerDraftStore.getState();
+    // No setFileUpload: the upload never finished, so there is no attachment
+    // id and the File handle cannot serialize.
+    store.addFiles(threadRef, [makeFile("file-pending")]);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const options = persistApi.getOptions();
+    const persisted = options.partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey: Record<string, { files?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(persisted.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.files).toEqual(
+      [
+        {
+          id: "file-pending",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 6,
+        },
+      ],
+    );
+
+    const hydrated = options.merge(persisted, useComposerDraftStore.getState());
+    const hydratedFiles =
+      hydrated.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.files;
+    expect(hydratedFiles).toEqual([
+      {
+        type: "file",
+        id: "file-pending",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 6,
+        file: null,
+      },
+    ]);
+    expect(hydratedFiles?.every(composerFileNeedsReattach)).toBe(true);
+  });
+
+  it("marks only the matching byte-less upload as missing", () => {
+    const store = useComposerDraftStore.getState();
+    const hydrated: ComposerFileAttachment = {
+      ...makeFile("file-hydrated"),
+      file: null,
+      uploadedAttachmentId: "pending-old",
+      uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+    };
+    const local: ComposerFileAttachment = {
+      ...makeFile("file-local"),
+      name: "local.txt",
+      mimeType: "text/plain",
+    };
+    store.addFiles(threadRef, [hydrated, local]);
+    store.setFileUpload(threadRef, hydrated.id, TEST_ENVIRONMENT_ID, "pending-new");
+    store.setFileUpload(threadRef, local.id, TEST_ENVIRONMENT_ID, "pending-local");
+
+    expect(
+      store.markFileUploadMissing(threadRef, hydrated.id, OTHER_TEST_ENVIRONMENT_ID, "pending-new"),
+    ).toBe(false);
+    expect(
+      store.markFileUploadMissing(threadRef, hydrated.id, TEST_ENVIRONMENT_ID, "pending-old"),
+    ).toBe(false);
+    expect(
+      store.markFileUploadMissing(threadRef, local.id, TEST_ENVIRONMENT_ID, "pending-local"),
+    ).toBe(false);
+
+    expect(store.getComposerDraft(threadRef)?.files).toMatchObject([
+      {
+        id: hydrated.id,
+        uploadedAttachmentId: "pending-new",
+        uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+      },
+      {
+        id: local.id,
+        file: local.file,
+        uploadedAttachmentId: "pending-local",
+        uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+      },
+    ]);
+
+    expect(
+      store.markFileUploadMissing(threadRef, hydrated.id, TEST_ENVIRONMENT_ID, "pending-new"),
+    ).toBe(true);
+    const marker = store.getComposerDraft(threadRef)?.files[0];
+    expect(marker && composerFileNeedsReattach(marker)).toBe(true);
+    expect(marker?.uploadedAttachmentId).toBeUndefined();
+    expect(marker?.uploadEnvironmentId).toBeUndefined();
+  });
+
+  it("removes generic files when the composer is cleared", () => {
+    const store = useComposerDraftStore.getState();
+    store.addFiles(threadRef, [makeFile("file-clear")]);
+
+    store.clearComposerContent(threadRef);
+
+    expect(store.getComposerDraft(threadRef)).toBeNull();
+  });
+
+  it("removes generic files when a prompt is moved into the stash", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Review the report");
+    store.addFiles(threadRef, [makeFile("file-stash")]);
+
+    store.clearComposerPromptAndImages(threadRef);
+
+    expect(store.getComposerDraft(threadRef)).toBeNull();
+  });
+
+  it("enforces the combined file and image limit across separate updates", () => {
+    const store = useComposerDraftStore.getState();
+    const images = Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 }, (_, index) =>
+      makeImage({
+        id: `image-${index}`,
+        name: `image-${index}.png`,
+        previewUrl: `blob:image-${index}`,
+      }),
+    );
+    store.addImages(threadRef, images);
+    store.addFiles(threadRef, [
+      makeFile("file-accepted"),
+      { ...makeFile("file-overflow"), name: "other.pdf" },
+    ]);
+    store.addImages(threadRef, [
+      makeImage({ id: "image-overflow", name: "overflow.png", previewUrl: "blob:overflow" }),
+    ]);
+
+    const draft = store.getComposerDraft(threadRef);
+    expect(draft?.images).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1);
+    expect(draft?.files.map((file) => file.id)).toEqual(["file-accepted"]);
+  });
+
+  it("replaces a needs-reattach marker when the same file is picked again", () => {
+    const store = useComposerDraftStore.getState();
+    // A hydrated marker: same metadata as the original pick, no bytes and no
+    // server-side upload.
+    const marker: ComposerFileAttachment = { ...makeFile("file-marker"), file: null };
+    store.addFiles(threadRef, [marker]);
+    expect(store.getComposerDraft(threadRef)?.files.every(composerFileNeedsReattach)).toBe(true);
+
+    // Following the "Attach again" instruction produces a fresh id with the
+    // exact metadata the dedup key hashes.
+    const repicked = makeFile("file-repicked");
+    store.addFiles(threadRef, [repicked]);
+
+    const files = store.getComposerDraft(threadRef)?.files;
+    expect(files?.map((file) => file.id)).toEqual(["file-repicked"]);
+    expect(files?.[0]?.file).not.toBeNull();
+    expect(files?.some(composerFileNeedsReattach)).toBe(false);
+  });
+
+  it("replaces a needs-reattach marker with a stash-restored uploaded file", () => {
+    const store = useComposerDraftStore.getState();
+    const marker: ComposerFileAttachment = { ...makeFile("file-marker"), file: null };
+    store.addFiles(threadRef, [marker]);
+    expect(store.getComposerDraft(threadRef)?.files.every(composerFileNeedsReattach)).toBe(true);
+
+    // A stash restore carries a finished server-side upload instead of bytes.
+    // Matching metadata must replace the marker, not be dropped as a
+    // duplicate: the marker cannot send, and the restored ids are the only
+    // valid copy.
+    const restored: ComposerFileAttachment = {
+      ...makeFile("file-restored"),
+      file: null,
+      uploadedAttachmentId: "pending-stash-pdf",
+      uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+    };
+    store.addFiles(threadRef, [restored]);
+
+    const files = store.getComposerDraft(threadRef)?.files;
+    expect(files?.map((file) => file.id)).toEqual(["file-restored"]);
+    expect(files?.[0]?.uploadedAttachmentId).toBe("pending-stash-pdf");
+    expect(files?.[0]?.uploadEnvironmentId).toBe(TEST_ENVIRONMENT_ID);
+    expect(files?.some(composerFileNeedsReattach)).toBe(false);
+  });
+
+  it("carries files across a move alongside images", () => {
+    const fromThreadId = ThreadId.make("thread-move-from-files");
+    const toThreadId = ThreadId.make("thread-move-to-files");
+    const fromRef = scopeThreadRef(TEST_ENVIRONMENT_ID, fromThreadId);
+    const toRef = scopeThreadRef(TEST_ENVIRONMENT_ID, toThreadId);
+    const store = useComposerDraftStore.getState();
+    store.addFiles(fromRef, [makeFile("file-move")]);
+
+    store.moveComposerPromptAndImages(fromRef, toRef);
+
+    expect(store.getComposerDraft(fromRef)).toBeNull();
+    expect(store.getComposerDraft(toRef)?.files.map((file) => file.id)).toEqual(["file-move"]);
+  });
+
+  it("retains overflow files in the source draft instead of dropping them on a move", () => {
+    const fromThreadId = ThreadId.make("thread-move-overflow-from");
+    const toThreadId = ThreadId.make("thread-move-overflow-to");
+    const fromRef = scopeThreadRef(TEST_ENVIRONMENT_ID, fromThreadId);
+    const toRef = scopeThreadRef(TEST_ENVIRONMENT_ID, toThreadId);
+    const store = useComposerDraftStore.getState();
+
+    // Destination already holds enough images that only one file slot
+    // remains under the shared cap.
+    const destinationImages = Array.from(
+      { length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 },
+      (_, index) =>
+        makeImage({
+          id: `dest-image-${index}`,
+          name: `dest-image-${index}.png`,
+          previewUrl: `blob:dest-image-${index}`,
+        }),
+    );
+    store.addImages(toRef, destinationImages);
+    store.addFiles(fromRef, [
+      { ...makeFile("file-fits"), name: "fits.pdf" },
+      { ...makeFile("file-overflow"), name: "overflow.pdf" },
+    ]);
+
+    store.moveComposerPromptAndImages(fromRef, toRef);
+
+    expect(store.getComposerDraft(toRef)?.files.map((file) => file.id)).toEqual(["file-fits"]);
+    expect(store.getComposerDraft(fromRef)?.files.map((file) => file.id)).toEqual([
+      "file-overflow",
+    ]);
   });
 });
 
