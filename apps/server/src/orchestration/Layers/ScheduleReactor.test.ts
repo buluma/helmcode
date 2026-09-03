@@ -15,7 +15,8 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -284,25 +285,33 @@ describe("computeNextRunAt", () => {
 });
 
 describe("ScheduleReactor firing", () => {
-  it("dispatches a turn start with the schedule prompt and reschedules when the timer fires", async () => {
-    const { commands, turnStarts, reschedules } = await Effect.runPromise(
-      runReactor({ schedule: schedule() }, Duration.seconds(10)),
-    );
+  it.effect(
+    "dispatches a turn start with the schedule prompt and reschedules when the timer fires",
+    () =>
+      Effect.gen(function* () {
+        const { commands, turnStarts, reschedules } = yield* runReactor(
+          { schedule: schedule() },
+          Duration.seconds(10),
+        );
 
-    expect(commands).toContain("thread.turn.start");
-    expect(commands).toContain("thread.schedule.create");
-    expect(turnStarts).toEqual([{ threadId, text: "Continue where you left off." }]);
-    expect(reschedules).toHaveLength(1);
-  });
+        expect(commands).toContain("thread.turn.start");
+        expect(commands).toContain("thread.schedule.create");
+        expect(turnStarts).toEqual([{ threadId, text: "Continue where you left off." }]);
+        expect(reschedules).toHaveLength(1);
+      }),
+  );
 
-  it("skips firing while a turn is running and only reschedules", async () => {
-    const { commands, turnStarts, reschedules } = await Effect.runPromise(
-      runReactor({ schedule: schedule(), session: runningSession }, Duration.seconds(10)),
-    );
+  it.effect("skips firing while a turn is running and only reschedules", () =>
+    Effect.gen(function* () {
+      const { commands, turnStarts, reschedules } = yield* runReactor(
+        { schedule: schedule(), session: runningSession },
+        Duration.seconds(10),
+      );
 
-    expect(commands).not.toContain("thread.turn.start");
-    expect(commands).toContain("thread.schedule.create");
-    expect(turnStarts).toEqual([]);
-    expect(reschedules).toHaveLength(1);
-  });
+      expect(commands).not.toContain("thread.turn.start");
+      expect(commands).toContain("thread.schedule.create");
+      expect(turnStarts).toEqual([]);
+      expect(reschedules).toHaveLength(1);
+    }),
+  );
 });

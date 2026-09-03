@@ -661,7 +661,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.schedule.create": {
-      const thread = yield* requireThreadNotArchived({
+      yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
