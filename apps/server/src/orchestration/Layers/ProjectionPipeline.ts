@@ -103,7 +103,7 @@ interface ProjectorDefinition {
 
 interface AttachmentSideEffects {
   readonly deletedThreadIds: Set<string>;
-  readonly prunedThreadRelativePaths: Map<string, Set<string>>;
+  readonly prunedThreadRelativePaths: Map<string, ThreadAttachmentPruneKeepSet>;
 }
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
@@ -327,28 +327,42 @@ function retainProjectionProposedPlansAfterRevert(
   );
 }
 
+interface ThreadAttachmentPruneKeepSet {
+  readonly relativePaths: Set<string>;
+  /** Ids of referenced attachments whose type this build cannot resolve to a
+      relative path (see `ChatUnknownAttachment`). Their on-disk extension is
+      unknowable here, so `pruneThreadAttachmentEntry` matches by id instead
+      and keeps the file regardless of extension. Without this, a message
+      that references a forward-compat attachment type would have that
+      attachment's file deleted by this same cleanup pass. */
+  readonly unresolvedAttachmentIds: Set<string>;
+}
+
 function collectThreadAttachmentRelativePaths(
   threadId: string,
   messages: ReadonlyArray<ProjectionThreadMessage>,
-): Set<string> {
+): ThreadAttachmentPruneKeepSet {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (!threadSegment) {
-    return new Set();
+    return { relativePaths: new Set(), unresolvedAttachmentIds: new Set() };
   }
   const relativePaths = new Set<string>();
+  const unresolvedAttachmentIds = new Set<string>();
   for (const message of messages) {
     for (const attachment of message.attachments ?? []) {
-      if (attachment.type !== "image") {
-        continue;
-      }
       const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
       if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
         continue;
       }
-      relativePaths.add(attachmentRelativePath(attachment));
+      const relativePath = attachmentRelativePath(attachment);
+      if (relativePath) {
+        relativePaths.add(relativePath);
+      } else {
+        unresolvedAttachmentIds.add(attachment.id);
+      }
     }
   }
-  return relativePaths;
+  return { relativePaths, unresolvedAttachmentIds };
 }
 
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
@@ -406,7 +420,7 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
 
   const pruneThreadAttachmentEntry = Effect.fn("pruneThreadAttachmentEntry")(function* (
     threadSegment: string,
-    keptThreadRelativePaths: Set<string>,
+    keepSet: ThreadAttachmentPruneKeepSet,
     entry: string,
   ) {
     const relativePath = entry.replace(/^[/\\]+/, "").replace(/\\/g, "/");
@@ -421,6 +435,12 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
     if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
       return;
     }
+    // A referenced attachment of a type this build cannot resolve to a
+    // relative path (see ThreadAttachmentPruneKeepSet) is matched by id here,
+    // since its on-disk extension is unknowable — keep it regardless.
+    if (keepSet.unresolvedAttachmentIds.has(attachmentId)) {
+      return;
+    }
 
     const absolutePath = path.join(attachmentsRootDir, relativePath);
     const fileInfo = yield* fileSystem.stat(absolutePath).pipe(Effect.orElseSucceed(() => null));
@@ -428,14 +448,14 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
       return;
     }
 
-    if (!keptThreadRelativePaths.has(relativePath)) {
+    if (!keepSet.relativePaths.has(relativePath)) {
       yield* fileSystem.remove(absolutePath, { force: true });
     }
   });
 
   const pruneThreadAttachments = Effect.fn("pruneThreadAttachments")(function* (
     threadId: string,
-    keptThreadRelativePaths: Set<string>,
+    keepSet: ThreadAttachmentPruneKeepSet,
   ) {
     if (sideEffects.deletedThreadIds.has(threadId)) {
       return;
@@ -450,7 +470,7 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
     const entries = yield* readAttachmentRootEntries;
     yield* Effect.forEach(
       entries,
-      (entry) => pruneThreadAttachmentEntry(threadSegment, keptThreadRelativePaths, entry),
+      (entry) => pruneThreadAttachmentEntry(threadSegment, keepSet, entry),
       { concurrency: 1 },
     );
   });
@@ -1682,7 +1702,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
         deletedThreadIds: new Set<string>(),
-        prunedThreadRelativePaths: new Map<string, Set<string>>(),
+        prunedThreadRelativePaths: new Map<string, ThreadAttachmentPruneKeepSet>(),
       };
 
       yield* sql.withTransaction(

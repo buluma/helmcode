@@ -888,7 +888,9 @@ function renderFeedEntry(
     const isUser = message.role === "user";
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
-    const attachments = message.attachments ?? [];
+    const attachments = (message.attachments ?? []).filter(
+      (attachment) => attachment.type === "image",
+    );
     const hasReviewCommentContext = message.text.includes("<review_comment");
     // A bubble that sizes itself from its content cannot lay out a block whose
     // intrinsic width overflows `maxWidth`: Android positions the bubble's
@@ -905,6 +907,14 @@ function renderFeedEntry(
       props.terminalAssistantMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
+
+    // Skip empty messages — no text and no renderable (image) attachments.
+    // Mobile doesn't render file attachments yet, so a message with only a
+    // file and no text would otherwise show up as an orphaned empty bubble
+    // and break adjacent activity-group merging.
+    if (message.text.trim().length === 0 && attachments.length === 0) {
+      return null;
+    }
 
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
@@ -962,12 +972,6 @@ function renderFeedEntry(
           </View>
         </Animated.View>
       );
-    }
-
-    // Skip empty assistant messages (no text, no attachments) — they would
-    // render as an orphaned timestamp and break adjacent activity-group merging.
-    if (message.text.trim().length === 0 && attachments.length === 0) {
-      return null;
     }
 
     const enterAnimated = isFreshTimestamp(message.createdAt);
