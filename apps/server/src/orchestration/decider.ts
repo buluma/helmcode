@@ -646,6 +646,74 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.schedule.create": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      const { schedule } = command;
+      // Validate: at least one of cron or intervalMs must be set.
+      if (schedule.cron == null && schedule.intervalMs == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} schedule must have at least one of cron or intervalMs`,
+        });
+      }
+      // Validate: prompt must be non-empty (schema guarantees this, but be safe).
+      if (schedule.prompt.trim().length === 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} schedule prompt must not be empty`,
+        });
+      }
+      // Validate: nextRunAt must be in the future.
+      if (!(Date.parse(schedule.nextRunAt) > Date.parse(occurredAt))) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} schedule nextRunAt ${schedule.nextRunAt} is not in the future`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.scheduled",
+        payload: {
+          threadId: command.threadId,
+          schedule,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.schedule.cancel": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Idempotent: cancelling a schedule that doesn't exist is a no-op.
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unscheduled",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.pin": {
       const thread = yield* requireThreadNotArchived({
         readModel,

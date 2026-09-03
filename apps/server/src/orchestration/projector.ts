@@ -28,6 +28,8 @@ import {
   ThreadSnoozedPayload,
   ThreadUnpinnedPayload,
   ThreadUnarchivedPayload,
+  ThreadUnscheduledPayload,
+  ThreadScheduledPayload,
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
@@ -400,6 +402,28 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             snoozedUntil: null,
             snoozedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.scheduled":
+      return decodeForEvent(ThreadScheduledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            schedule: payload.schedule,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.unscheduled":
+      return decodeForEvent(ThreadUnscheduledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            schedule: null,
             updatedAt: payload.updatedAt,
           }),
         })),
