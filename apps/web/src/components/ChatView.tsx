@@ -1,5 +1,7 @@
 import {
   type ApprovalRequestId,
+  type ChatAttachment,
+  type UploadChatAttachment,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -190,6 +192,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { getUploadedAttachments } from "../lib/attachmentUploadQueue";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -200,6 +203,7 @@ import {
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
+  type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   useComposerDraftStore,
@@ -1331,6 +1335,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
@@ -4115,6 +4120,11 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPullRequests && activeThreadPr !== null && threadRepository !== null;
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const attachmentUploadsCapabilityKnown = serverConfig !== undefined;
+  const supportsAttachmentUploads =
+    serverConfig?.environment.capabilities.attachmentUploads === true;
+  const maxFileAttachmentBytes =
+    serverConfig?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null;
   const nowMinute = useNowMinute();
   const snoozeNow = new Date().toISOString();
   const activeThreadSnoozed =
@@ -4919,6 +4929,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const {
       images: sendContextImages,
+      files: sendContextFiles,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
       previewAnnotations: sendContextPreviewAnnotations,
@@ -4934,6 +4945,7 @@ function ChatViewContent(props: ChatViewProps) {
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
         ? [...sendContextImages, directAnnotation.image]
         : sendContextImages;
+    const composerFiles = sendContextFiles;
     const composerPreviewAnnotations =
       directAnnotation &&
       !sendContextPreviewAnnotations.some(
@@ -4957,7 +4969,7 @@ function ChatViewContent(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      imageCount: composerImages.length + composerFiles.length,
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
@@ -5057,6 +5069,7 @@ function ChatViewContent(props: ChatViewProps) {
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
+    const composerFilesSnapshot = [...composerFiles];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
@@ -5082,23 +5095,49 @@ function ChatViewContent(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
+    // Files can only ever go through the upload queue (the inline dataUrl
+    // path only decodes images server-side), and addComposerAttachments
+    // already refuses a file when uploads aren't supported — so any file
+    // here means uploads are supported and every attachment, images
+    // included, already has a server-side copy to reference by id.
+    const turnAttachmentsPromise: Promise<Array<UploadChatAttachment | ChatAttachment>> =
+      composerFilesSnapshot.length > 0 || supportsAttachmentUploads
+        ? (async () => {
+            const uploaded = getUploadedAttachments({
+              environmentId,
+              images: [...composerImagesSnapshot, ...composerFilesSnapshot],
+            });
+            if (!uploaded) {
+              throw new Error("Attachment uploads are not finished yet.");
+            }
+            return uploaded;
+          })()
+        : Promise.all(
+            composerImagesSnapshot.map(async (image) => ({
+              type: "image" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl: await readFileAsDataUrl(image.file),
+            })),
+          );
+    const optimisticAttachments = [
+      ...composerImagesSnapshot.map((image) => ({
         type: "image" as const,
+        id: image.id,
         name: image.name,
         mimeType: image.mimeType,
         sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
+        previewUrl: image.previewUrl,
       })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+      ...composerFilesSnapshot.map((file) => ({
+        type: "file" as const,
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+      })),
+    ];
     // Sending always returns to the live edge. The new row becomes the
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
@@ -6334,6 +6373,9 @@ function ChatViewContent(props: ChatViewProps) {
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
                             composerRef={composerRef}
+                            attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
+                            supportsAttachmentUploads={supportsAttachmentUploads}
+                            maxFileAttachmentBytes={maxFileAttachmentBytes}
                             composerDraftTarget={composerDraftTarget}
                             environmentId={environmentId}
                             routeKind={routeKind}
@@ -6379,6 +6421,7 @@ function ChatViewContent(props: ChatViewProps) {
                             gitCwd={gitCwd}
                             promptRef={promptRef}
                             composerImagesRef={composerImagesRef}
+                            composerFilesRef={composerFilesRef}
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
