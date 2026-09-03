@@ -3839,11 +3839,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               stripInlineTerminalContextPlaceholders(source.prompt),
               destination.terminalContexts.length,
             );
+            // The combined image+file count must stay under the shared cap.
+            // Images move unconditionally (matches prior behavior); any file
+            // that would push the destination over the limit stays behind in
+            // the source draft instead of being silently dropped.
+            const movedImageCount = destination.images.length + source.images.length;
+            const availableFileSlots = Math.max(
+              0,
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS - destination.files.length - movedImageCount,
+            );
+            const movedFiles = source.files.slice(0, availableFileSlots);
+            const retainedFiles = source.files.slice(availableFileSlots);
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
               prompt: movedPrompt,
               images: [...destination.images, ...source.images],
-              files: [...destination.files, ...source.files],
+              files: [...destination.files, ...movedFiles],
               nonPersistedImageIds: [
                 ...destination.nonPersistedImageIds,
                 ...source.nonPersistedImageIds,
@@ -3860,7 +3871,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...source,
               prompt: ensureInlineTerminalContextPlaceholders("", source.terminalContexts.length),
               images: [],
-              files: [],
+              files: retainedFiles,
               nonPersistedImageIds: [],
               persistedAttachments: [],
             };

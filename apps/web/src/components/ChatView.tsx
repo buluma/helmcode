@@ -1309,6 +1309,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -4120,7 +4121,7 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPullRequests && activeThreadPr !== null && threadRepository !== null;
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
-  const attachmentUploadsCapabilityKnown = serverConfig !== undefined;
+  const attachmentUploadsCapabilityKnown = serverConfig !== null;
   const supportsAttachmentUploads =
     serverConfig?.environment.capabilities.attachmentUploads === true;
   const maxFileAttachmentBytes =
@@ -5121,6 +5122,10 @@ function ChatViewContent(props: ChatViewProps) {
               dataUrl: await readFileAsDataUrl(image.file),
             })),
           );
+    // Settled below via settlePromise, but only after other awaited work
+    // (title/settings updates) runs first — attach a no-op handler now so a
+    // rejection in that gap doesn't report as an unhandled rejection.
+    turnAttachmentsPromise.catch(() => {});
     const optimisticAttachments = [
       ...composerImagesSnapshot.map((image) => ({
         type: "image" as const,
@@ -5309,6 +5314,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
+        composerFilesRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
@@ -5327,10 +5333,14 @@ function ChatViewContent(props: ChatViewProps) {
         promptRef.current = promptForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
+        composerFilesRef.current = composerFilesSnapshot;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
+        if (composerFilesSnapshot.length > 0) {
+          addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
+        }
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);

@@ -523,6 +523,38 @@ describe("composerDraftStore file attachments", () => {
     expect(store.getComposerDraft(fromRef)).toBeNull();
     expect(store.getComposerDraft(toRef)?.files.map((file) => file.id)).toEqual(["file-move"]);
   });
+
+  it("retains overflow files in the source draft instead of dropping them on a move", () => {
+    const fromThreadId = ThreadId.make("thread-move-overflow-from");
+    const toThreadId = ThreadId.make("thread-move-overflow-to");
+    const fromRef = scopeThreadRef(TEST_ENVIRONMENT_ID, fromThreadId);
+    const toRef = scopeThreadRef(TEST_ENVIRONMENT_ID, toThreadId);
+    const store = useComposerDraftStore.getState();
+
+    // Destination already holds enough images that only one file slot
+    // remains under the shared cap.
+    const destinationImages = Array.from(
+      { length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 },
+      (_, index) =>
+        makeImage({
+          id: `dest-image-${index}`,
+          name: `dest-image-${index}.png`,
+          previewUrl: `blob:dest-image-${index}`,
+        }),
+    );
+    store.addImages(toRef, destinationImages);
+    store.addFiles(fromRef, [
+      { ...makeFile("file-fits"), name: "fits.pdf" },
+      { ...makeFile("file-overflow"), name: "overflow.pdf" },
+    ]);
+
+    store.moveComposerPromptAndImages(fromRef, toRef);
+
+    expect(store.getComposerDraft(toRef)?.files.map((file) => file.id)).toEqual(["file-fits"]);
+    expect(store.getComposerDraft(fromRef)?.files.map((file) => file.id)).toEqual([
+      "file-overflow",
+    ]);
+  });
 });
 
 describe("composerDraftStore clearComposerContent", () => {

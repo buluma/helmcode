@@ -58,6 +58,7 @@ import {
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
 import {
+  attachmentsToReleaseOnUploadCapabilityLoss,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
@@ -75,6 +76,7 @@ import { ComposerStashMenu } from "./ComposerStashMenu";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import {
   releaseAttachmentUpload,
+  releaseDraftAttachment,
   retryAttachmentUpload,
   startAttachmentUpload,
   useAttachmentUploadStore,
@@ -1358,10 +1360,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const removeComposerFileFromDraft = useCallback(
     (fileId: string) => {
-      releaseAttachmentUpload(fileId);
+      const file = composerFiles.find((entry) => entry.id === fileId);
+      if (file) {
+        releaseDraftAttachment(file);
+      } else {
+        releaseAttachmentUpload(fileId);
+      }
       removeComposerDraftFile(composerDraftTarget, fileId);
     },
-    [composerDraftTarget, removeComposerDraftFile],
+    [composerDraftTarget, composerFiles, removeComposerDraftFile],
   );
 
   const removeComposerTerminalContextFromDraft = useCallback(
@@ -1414,22 +1421,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (!supportsAttachmentUploads) {
-      for (const attachment of [...composerImages, ...composerFiles]) {
+      // A persisted file's uploadedAttachmentId is a server copy the draft
+      // itself references (survives reload); losing capability mid-session
+      // must not delete that copy out from under the draft, only whatever
+      // this queue is actively holding for the other, in-flight attachments.
+      for (const attachment of attachmentsToReleaseOnUploadCapabilityLoss([
+        ...composerImages,
+        ...composerFiles,
+      ])) {
         releaseAttachmentUpload(attachment.id);
       }
       return;
     }
     for (const image of composerImages) {
-      startAttachmentUpload({ environmentId, image });
+      startAttachmentUpload({ environmentId, image, draftTarget: composerDraftTarget });
     }
     for (const file of composerFiles) {
       if (composerFileNeedsReattach(file)) {
         continue;
       }
-      startAttachmentUpload({ environmentId, image: file });
+      startAttachmentUpload({ environmentId, image: file, draftTarget: composerDraftTarget });
     }
   }, [
     attachmentUploadsCapabilityKnown,
+    composerDraftTarget,
     composerFiles,
     composerImages,
     environmentId,
@@ -2467,7 +2482,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       reservedCount += 1;
     }
-    setThreadError(threadId, error);
+    // Only report an error here; by now other work (a failed send, an
+    // overlapping paste) may have set a thread error this call knows
+    // nothing about, and clearing it on a plain success would swallow it.
+    if (error !== null) {
+      setThreadError(threadId, error);
+    }
     if (acceptedFiles.length > 0) {
       addComposerFilesToDraft(acceptedFiles);
     }
@@ -3196,7 +3216,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                     variant="ghost"
                                     size="icon-xs"
                                     className="absolute bottom-1 left-1 bg-background/85 hover:bg-background/95"
-                                    onClick={() => retryAttachmentUpload({ environmentId, image })}
+                                    onClick={() =>
+                                      retryAttachmentUpload({
+                                        environmentId,
+                                        image,
+                                        draftTarget: composerDraftTarget,
+                                      })
+                                    }
                                     aria-label={`Retry upload for ${image.name}`}
                                   />
                                 }
@@ -3263,7 +3289,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   size="icon-xs"
                                   className="absolute bottom-1 left-1 bg-background/85 hover:bg-background/95"
                                   onClick={() =>
-                                    retryAttachmentUpload({ environmentId, image: file })
+                                    retryAttachmentUpload({
+                                      environmentId,
+                                      image: file,
+                                      draftTarget: composerDraftTarget,
+                                    })
                                   }
                                   aria-label={`Retry upload for ${file.name}`}
                                 />
