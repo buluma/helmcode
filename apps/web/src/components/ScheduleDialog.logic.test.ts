@@ -104,6 +104,20 @@ describe("computeNextRunAt", () => {
     expect(nextRunAt).toBe("2026-10-04T09:00:00.000Z");
   });
 
+  it("MONTHLY cron clamps a Jan 31 target to Feb 28 in a non-leap year", () => {
+    // 2026 is not a leap year.
+    const now = new Date("2026-01-31T10:00:00.000Z");
+    const nextRunAt = computeNextRunAt("cron", 60, "FREQ=MONTHLY;BYHOUR=9;BYMINUTE=0", now);
+    expect(nextRunAt).toBe("2026-02-28T09:00:00.000Z");
+  });
+
+  it("MONTHLY cron clamps a Jan 31 target to Feb 29 in a leap year", () => {
+    // 2028 is a leap year.
+    const now = new Date("2028-01-31T10:00:00.000Z");
+    const nextRunAt = computeNextRunAt("cron", 60, "FREQ=MONTHLY;BYHOUR=9;BYMINUTE=0", now);
+    expect(nextRunAt).toBe("2028-02-29T09:00:00.000Z");
+  });
+
   it("with no recognizable FREQ, treats it like a daily run at the current UTC time", () => {
     const now = new Date("2026-09-04T12:00:00.000Z");
     const nextRunAt = computeNextRunAt("cron", 60, "", now);

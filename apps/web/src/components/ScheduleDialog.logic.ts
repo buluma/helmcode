@@ -72,9 +72,16 @@ export function computeNextRunAt(
     if (daysAhead === 0 && next.getTime() <= now.getTime()) daysAhead = 7;
     next.setUTCDate(next.getUTCDate() + daysAhead);
   } else if (next.getTime() <= now.getTime()) {
-    // DAILY advances a day; MONTHLY advances a calendar month.
+    // DAILY advances a day; MONTHLY advances a calendar month, clamped to
+    // the target month's last day (mirrors DateTime.add's month-end
+    // clamping on the server — e.g. Jan 31 + 1 month lands on Feb 28/29,
+    // not rolling over into March like a plain setUTCMonth would).
     if (freq === "MONTHLY") {
-      next.setUTCMonth(next.getUTCMonth() + 1);
+      const day = next.getUTCDate();
+      next.setUTCMonth(next.getUTCMonth() + 2, 0);
+      if (day < next.getUTCDate()) {
+        next.setUTCDate(day);
+      }
     } else {
       next.setUTCDate(next.getUTCDate() + 1);
     }
