@@ -294,10 +294,13 @@ describe("ScheduleReactor firing", () => {
           Duration.seconds(10),
         );
 
-        expect(commands).toContain("thread.turn.start");
-        expect(commands).toContain("thread.schedule.create");
+        // thread.turn.start must dispatch before the reschedule so a fired
+        // schedule cannot be "reset" ahead of the turn it was meant to start.
+        expect(commands).toEqual(["thread.turn.start", "thread.schedule.create"]);
         expect(turnStarts).toEqual([{ threadId, text: "Continue where you left off." }]);
-        expect(reschedules).toHaveLength(1);
+        // Fired at the schedule's default nextRunAt (00:00:10) with
+        // intervalMs: 60_000, so the reschedule lands exactly 60s later.
+        expect(reschedules).toEqual(["1970-01-01T00:01:10.000Z"]);
       }),
   );
 
@@ -308,10 +311,11 @@ describe("ScheduleReactor firing", () => {
         Duration.seconds(10),
       );
 
-      expect(commands).not.toContain("thread.turn.start");
-      expect(commands).toContain("thread.schedule.create");
+      expect(commands).toEqual(["thread.schedule.create"]);
       expect(turnStarts).toEqual([]);
-      expect(reschedules).toHaveLength(1);
+      // Retried 5 minutes after the fire time (00:00:10), not the schedule's
+      // normal cadence.
+      expect(reschedules).toEqual(["1970-01-01T00:05:10.000Z"]);
     }),
   );
 });
