@@ -6,7 +6,12 @@ import {
 } from "@helmcode/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@helmcode/client-runtime/state/runtime";
 import { canSettle, canSnooze, threadWokeAt } from "@helmcode/client-runtime/state/thread-settled";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@helmcode/contracts";
+import {
+  EnvironmentId,
+  type ScopedThreadRef,
+  ThreadId,
+  type ThreadSchedule,
+} from "@helmcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -14,6 +19,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { computeNextRunAt } from "../components/ScheduleDialog.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -24,6 +30,7 @@ import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
+  readEnvironmentSupportsScheduling,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentThreadRefs,
@@ -84,6 +91,18 @@ export class ThreadSnoozeUnsupportedError extends Schema.TaggedErrorClass<Thread
 ) {
   override get message(): string {
     return "This environment's server does not support snoozing yet. Update the server to use Snooze.";
+  }
+}
+
+export class ThreadSchedulingUnsupportedError extends Schema.TaggedErrorClass<ThreadSchedulingUnsupportedError>()(
+  "ThreadSchedulingUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support scheduling yet. Update the server to use Automations.";
   }
 }
 
@@ -165,6 +184,12 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const scheduleThreadMutation = useAtomCommand(threadEnvironment.schedule, {
+    reportFailure: false,
+  });
+  const cancelThreadScheduleMutation = useAtomCommand(threadEnvironment.cancelSchedule, {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession);
@@ -666,6 +691,94 @@ export function useThreadActions() {
     [unsnoozeThreadMutation],
   );
 
+  const scheduleThread = useCallback(
+    async (target: ScopedThreadRef, schedule: ThreadSchedule) => {
+      if (!readEnvironmentSupportsScheduling(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadSchedulingUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return scheduleThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, schedule },
+      });
+    },
+    [scheduleThreadMutation],
+  );
+
+  const cancelThreadSchedule = useCallback(
+    async (target: ScopedThreadRef) => {
+      if (!readEnvironmentSupportsScheduling(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadSchedulingUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return cancelThreadScheduleMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId },
+      });
+    },
+    [cancelThreadScheduleMutation],
+  );
+
+  // Pause/resume re-dispatch the same schedule.create command with `enabled`
+  // flipped, keeping the prompt/cadence/model override intact (unlike cancel,
+  // which drops the schedule entirely). Resuming recomputes `nextRunAt` from
+  // now since the decider requires it to be in the future, and a schedule can
+  // sit paused past its old slot.
+  const setThreadSchedulePaused = useCallback(
+    async (target: ScopedThreadRef, paused: boolean) => {
+      if (!readEnvironmentSupportsScheduling(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadSchedulingUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      const thread = readThreadShell(target);
+      const schedule = thread?.schedule;
+      if (!schedule) return AsyncResult.success(undefined);
+      const nextRunAt = paused
+        ? schedule.nextRunAt
+        : computeNextRunAt(
+            schedule.cron != null ? "cron" : "interval",
+            schedule.intervalMs != null ? Math.max(1, schedule.intervalMs) / 60_000 : 60,
+            schedule.cron ?? "",
+          );
+      return scheduleThreadMutation({
+        environmentId: target.environmentId,
+        input: {
+          threadId: target.threadId,
+          schedule: { ...schedule, enabled: !paused, nextRunAt },
+        },
+      });
+    },
+    [scheduleThreadMutation],
+  );
+
+  const pauseThreadSchedule = useCallback(
+    (target: ScopedThreadRef) => setThreadSchedulePaused(target, true),
+    [setThreadSchedulePaused],
+  );
+
+  const resumeThreadSchedule = useCallback(
+    (target: ScopedThreadRef) => setThreadSchedulePaused(target, false),
+    [setThreadSchedulePaused],
+  );
+
   const confirmAndDeleteThread = useCallback(
     async (target: ScopedThreadRef) => {
       const localApi = readLocalApi();
@@ -705,17 +818,25 @@ export function useThreadActions() {
       unsettleThread,
       snoozeThread,
       unsnoozeThread,
+      scheduleThread,
+      cancelThreadSchedule,
+      pauseThreadSchedule,
+      resumeThreadSchedule,
       pinThread,
       unpinThread,
       reorderPinnedThread,
     }),
     [
       archiveThread,
+      cancelThreadSchedule,
       confirmAndDeleteThread,
       deleteThread,
+      pauseThreadSchedule,
       pinThread,
       reorderPinnedThread,
+      resumeThreadSchedule,
       settleThread,
+      scheduleThread,
       snoozeThread,
       unarchiveThread,
       unpinThread,

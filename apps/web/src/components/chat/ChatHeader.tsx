@@ -33,6 +33,8 @@ import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useHelmCodeProjectFileScripts } from "~/hooks/useHelmCodeProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+import { useThreadActions } from "~/hooks/useThreadActions";
+import { ScheduleDialog } from "../ScheduleDialog";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -144,6 +146,8 @@ export const ChatHeader = memo(function ChatHeader({
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
   const [renaming, setRenaming] = useState<{ threadId: ThreadId; title: string } | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const openSchedule = useCallback(() => setScheduleOpen(true), []);
   if (renaming !== null && renaming.threadId !== activeThreadId) {
     setRenaming(null);
   }
@@ -183,7 +187,9 @@ export const ChatHeader = memo(function ChatHeader({
     projectCwd: activeProjectCwd,
     changeRequestState,
     onStartRename: startRename,
+    onRequestSchedule: openSchedule,
   });
+  const { scheduleThread } = useThreadActions();
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const openMenuFromTitle = useCallback(() => {
     const rect = titleButtonRef.current?.getBoundingClientRect();
@@ -336,6 +342,14 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
       </div>
+      {isServerThread && scheduleOpen ? (
+        <ScheduleDialog
+          threadRef={activeThreadRef}
+          open
+          onClose={() => setScheduleOpen(false)}
+          onSave={scheduleThread}
+        />
+      ) : null}
     </div>
   );
 });

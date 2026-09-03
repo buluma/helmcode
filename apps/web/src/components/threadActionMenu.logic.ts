@@ -16,6 +16,10 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "schedule"
+  | "pause-schedule"
+  | "resume-schedule"
+  | "cancel-schedule"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -29,11 +33,14 @@ export interface ThreadActionMenuState {
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
+  readonly hasSchedule: boolean;
+  readonly isSchedulePaused: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
+    readonly scheduling: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
   };
@@ -88,6 +95,16 @@ export function buildThreadActionMenuItems(
                 })),
               },
         ]
+      : []),
+    ...(state.supports.scheduling
+      ? state.hasSchedule
+        ? [
+            state.isSchedulePaused
+              ? { id: "resume-schedule" as const, label: "Resume schedule" }
+              : { id: "pause-schedule" as const, label: "Pause schedule" },
+            { id: "cancel-schedule" as const, label: "Cancel schedule" },
+          ]
+        : [{ id: "schedule" as const, label: "Schedule…" }]
       : []),
     { id: "rename", label: "Rename thread" },
     ...(state.supports.titleRegeneration

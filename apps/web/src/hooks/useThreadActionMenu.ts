@@ -25,6 +25,7 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   readEnvironmentSupportsPinning,
+  readEnvironmentSupportsScheduling,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
@@ -72,8 +73,10 @@ export function useThreadActionMenu(input: {
   /** PR state feeding auto-settle classification, as resolved by the caller. */
   readonly changeRequestState: ChangeRequestStateLike | null;
   readonly onStartRename: () => void;
+  /** Open the schedule dialog for the current thread. */
+  readonly onRequestSchedule?: () => void;
 }) {
-  const { threadRef, projectCwd, changeRequestState, onStartRename } = input;
+  const { threadRef, projectCwd, changeRequestState, onStartRename, onRequestSchedule } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -92,6 +95,9 @@ export function useThreadActionMenu(input: {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    cancelThreadSchedule,
+    pauseThreadSchedule,
+    resumeThreadSchedule,
     pinThread,
     unpinThread,
     deleteThread,
@@ -138,6 +144,7 @@ export function useThreadActionMenu(input: {
         const supports = {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
+          scheduling: readEnvironmentSupportsScheduling(threadRef.environmentId),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
@@ -159,6 +166,8 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          hasSchedule: thread.schedule != null,
+          isSchedulePaused: thread.schedule != null && !thread.schedule.enabled,
           supports,
           snoozePresets,
         });
@@ -245,6 +254,18 @@ export function useThreadActionMenu(input: {
           case "unsnooze":
             await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
             return;
+          case "schedule":
+            onRequestSchedule?.();
+            return;
+          case "pause-schedule":
+            await reportFailure("Failed to pause schedule", () => pauseThreadSchedule(threadRef));
+            return;
+          case "resume-schedule":
+            await reportFailure("Failed to resume schedule", () => resumeThreadSchedule(threadRef));
+            return;
+          case "cancel-schedule":
+            await reportFailure("Failed to cancel schedule", () => cancelThreadSchedule(threadRef));
+            return;
           case "pin":
             await reportFailure("Failed to pin thread", () => pinThread(threadRef));
             return;
@@ -322,6 +343,7 @@ export function useThreadActionMenu(input: {
     },
     [
       autoSettleAfterDays,
+      cancelThreadSchedule,
       changeRequestState,
       confirmThreadDelete,
       copyBranchToClipboard,
@@ -331,11 +353,14 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      onRequestSchedule,
       onStartRename,
+      pauseThreadSchedule,
       pinThread,
       projectCwd,
       projectGroupingSettings,
       projects,
+      resumeThreadSchedule,
       router,
       settleThread,
       snoozeThread,
