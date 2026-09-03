@@ -64,7 +64,21 @@ export const computeNextRunAt = (
   const minute = RRULE_MINUTE.exec(upper)?.[1];
 
   if (freq === "HOURLY") {
-    return DateTime.add(now, { hours: 1 });
+    // "Every hour at :BYMINUTE" (default :00), not a flat +1h from now.
+    const targetMinute = minute === undefined ? 0 : Number(minute);
+    let next = DateTime.makeUnsafe({
+      year: DateTime.getPartUtc(now, "year"),
+      month: DateTime.getPartUtc(now, "month"),
+      day: DateTime.getPartUtc(now, "day"),
+      hour: DateTime.getPartUtc(now, "hour"),
+      minute: targetMinute,
+      second: 0,
+      millisecond: 0,
+    });
+    if (DateTime.isLessThanOrEqualTo(next, now)) {
+      next = DateTime.add(next, { hours: 1 });
+    }
+    return next;
   }
 
   const targetHour = hour === undefined ? DateTime.getPartUtc(now, "hour") : Number(hour);
@@ -92,8 +106,8 @@ export const computeNextRunAt = (
     if (daysAhead === 0 && DateTime.isLessThanOrEqualTo(next, now)) daysAhead = 7;
     next = DateTime.add(next, { days: daysAhead });
   } else if (DateTime.isLessThanOrEqualTo(next, now)) {
-    // DAILY or MONTHLY: advance to the next period.
-    next = DateTime.add(next, { days: 1 });
+    // DAILY advances a day; MONTHLY advances a calendar month.
+    next = DateTime.add(next, freq === "MONTHLY" ? { months: 1 } : { days: 1 });
   }
 
   return next;
@@ -108,8 +122,15 @@ const make = Effect.gen(function* () {
   const snapshotQuery = yield* ProjectionSnapshotQuery;
 
   // Map of threadId → active timer fiber. Kept in a Ref so schedule changes
-  // can interrupt and replace a fiber; `drain` joins every live timer.
+  // can interrupt and replace a fiber. Most of these are asleep until
+  // nextRunAt, so `drain` must not join them directly (see activeFirings).
   const timers = yield* Ref.make(HashMap.empty<ThreadId, Fiber.Fiber<void, never>>());
+
+  // Map of threadId → fiber currently executing a fire (dispatching the
+  // turn-start and rescheduling), tracked separately from `timers` so
+  // `drain` only waits on in-flight work and not on fibers asleep until
+  // their next run.
+  const activeFirings = yield* Ref.make(HashMap.empty<ThreadId, Fiber.Fiber<void, never>>());
 
   // Dispatch a schedule command (already built as an effect to surface UUID
   // generation failures). Any error is logged and swallowed so the timer fiber
@@ -195,15 +216,22 @@ const make = Effect.gen(function* () {
 
   // Interrupt (and remove bookkeeping happens at next start) any timer already
   // scheduled for the thread so a schedule update replaces rather than stacks.
-  const interruptTimer = (threadId: ThreadId): Effect.Effect<void, never, never> =>
-    Ref.get(timers).pipe(
-      Effect.flatMap((map) =>
-        Option.match(HashMap.get(map, threadId), {
-          onNone: () => Effect.void,
-          onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
-        }),
-      ),
-    );
+  const interruptTimer = Effect.fn("interruptTimer")(function* (threadId: ThreadId) {
+    const timerMap = yield* Ref.get(timers);
+    yield* Option.match(HashMap.get(timerMap, threadId), {
+      onNone: () => Effect.void,
+      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
+    });
+    // A firing may be in flight (forked separately so drain can track it
+    // apart from sleeping timers) — interrupt it too, so replacing or
+    // cancelling a schedule mid-fire still cancels the in-flight dispatch,
+    // matching the old inline (non-forked) behavior.
+    const firingMap = yield* Ref.get(activeFirings);
+    yield* Option.match(HashMap.get(firingMap, threadId), {
+      onNone: () => Effect.void,
+      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
+    });
+  });
 
   // Reads the freshest thread state and fires its schedule if due.
   const fireTimerForThread = Effect.fn("fireTimerForThread")(function* (threadId: ThreadId) {
@@ -240,7 +268,15 @@ const make = Effect.gen(function* () {
     const delayMs = Math.max(0, DateTime.toEpochMillis(nextRunAt) - DateTime.toEpochMillis(now));
 
     const timer = Effect.sleep(`${delayMs} millis`).pipe(
-      Effect.andThen(fireTimerForThread(threadId)),
+      Effect.andThen(() =>
+        Effect.gen(function* () {
+          const firingFiber = yield* Effect.forkScoped(fireTimerForThread(threadId));
+          yield* Ref.update(activeFirings, (map) => HashMap.set(map, threadId, firingFiber));
+          yield* Fiber.join(firingFiber).pipe(
+            Effect.ensuring(Ref.update(activeFirings, (map) => HashMap.remove(map, threadId))),
+          );
+        }),
+      ),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           // Let interrupts (schedule replacement / scope close) propagate so the
@@ -259,7 +295,26 @@ const make = Effect.gen(function* () {
   });
 
   const start: ScheduleReactorShape["start"] = Effect.fn("start")(function* () {
-    // Bootstrap timers for schedules that exist at startup.
+    // Subscribe to schedule lifecycle events before reading the bootstrap
+    // snapshot below: streamDomainEvents is a hot, events-from-now-only
+    // stream, so a schedule created in the gap between a snapshot read and
+    // the subscription would otherwise never get a timer. startTimerForSchedule
+    // already interrupts and replaces any existing timer for a thread, so a
+    // thread seen by both the subscription and the snapshot is harmless.
+    yield* forkParked(
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+        if (event.type === "thread.scheduled") {
+          return startTimerForSchedule(event.payload.threadId, event.payload.schedule);
+        }
+        if (event.type === "thread.unscheduled") {
+          return interruptTimer(event.payload.threadId);
+        }
+        return Effect.void;
+      }),
+    );
+
+    // Bootstrap timers for schedules that already exist, now that the
+    // subscription above is live.
     const snapshot = yield* snapshotQuery.getSnapshot().pipe(
       Effect.catch((error) =>
         Effect.logWarning("schedule reactor failed to read snapshot on start", {
@@ -274,22 +329,11 @@ const make = Effect.gen(function* () {
         }
       }
     }
-
-    // Subscribe to schedule lifecycle events to start/cancel timer fibers.
-    yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (event.type === "thread.scheduled") {
-          return startTimerForSchedule(event.payload.threadId, event.payload.schedule);
-        }
-        if (event.type === "thread.unscheduled") {
-          return interruptTimer(event.payload.threadId);
-        }
-        return Effect.void;
-      }),
-    );
   });
 
-  const drain: ScheduleReactorShape["drain"] = Ref.get(timers).pipe(
+  // Joins only fibers actively firing (dispatching + rescheduling), not the
+  // (typically many) timer fibers asleep until their nextRunAt.
+  const drain: ScheduleReactorShape["drain"] = Ref.get(activeFirings).pipe(
     Effect.flatMap((map) => Fiber.joinAll(HashMap.values(map))),
     Effect.asVoid,
   );

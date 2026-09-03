@@ -210,12 +210,26 @@ describe("computeNextRunAt", () => {
     expect(DateTime.formatIso(next)).toBe("1970-01-01T01:00:00.000Z");
   });
 
-  it("returns +1 hour for HOURLY cron", () => {
+  it("returns +1 hour for HOURLY cron with no BYMINUTE (defaults to :00)", () => {
     const next = computeNextRunAt(
       { cron: "FREQ=HOURLY", intervalMs: null },
       DateTime.makeUnsafe(now),
     );
     expect(DateTime.formatIso(next)).toBe("1970-01-01T01:00:00.000Z");
+  });
+
+  it("respects BYMINUTE for HOURLY cron, rolling to the next hour once passed", () => {
+    const next = computeNextRunAt(
+      { cron: "FREQ=HOURLY;BYMINUTE=30", intervalMs: null },
+      DateTime.makeUnsafe("1970-01-01T00:10:00.000Z"),
+    );
+    expect(DateTime.formatIso(next)).toBe("1970-01-01T00:30:00.000Z");
+
+    const wrapped = computeNextRunAt(
+      { cron: "FREQ=HOURLY;BYMINUTE=30", intervalMs: null },
+      DateTime.makeUnsafe("1970-01-01T00:45:00.000Z"),
+    );
+    expect(DateTime.formatIso(wrapped)).toBe("1970-01-01T01:30:00.000Z");
   });
 
   it("computes the next DAILY run at the target time, advancing a day when passed", () => {
@@ -252,12 +266,20 @@ describe("computeNextRunAt", () => {
     expect(DateTime.formatIso(sameDay)).toBe("2026-09-07T09:00:00.000Z");
   });
 
-  it("defaults a non-HOURLY cron without a parseable target to +1 day", () => {
+  it("defaults a DAILY cron without a parseable target to +1 day", () => {
     const next = computeNextRunAt(
-      { cron: "FREQ=MONTHLY", intervalMs: null },
+      { cron: "FREQ=DAILY", intervalMs: null },
       DateTime.makeUnsafe(now),
     );
     expect(DateTime.formatIso(next)).toBe("1970-01-02T00:00:00.000Z");
+  });
+
+  it("advances a MONTHLY cron by a calendar month once the target time has passed", () => {
+    const next = computeNextRunAt(
+      { cron: "FREQ=MONTHLY;BYHOUR=9;BYMINUTE=0", intervalMs: null },
+      DateTime.makeUnsafe("1970-01-01T12:00:00.000Z"),
+    );
+    expect(DateTime.formatIso(next)).toBe("1970-02-01T09:00:00.000Z");
   });
 });
 
