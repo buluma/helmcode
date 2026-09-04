@@ -9,7 +9,15 @@ const baseState: ThreadActionMenuState = {
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
-  supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  hasSchedule: false,
+  isSchedulePaused: false,
+  supports: {
+    settlement: true,
+    snooze: true,
+    scheduling: true,
+    pinning: true,
+    titleRegeneration: true,
+  },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -24,7 +32,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          snooze: false,
+          scheduling: false,
+          pinning: false,
+          titleRegeneration: false,
+        },
       }),
     ).toEqual([
       "rename",
@@ -79,5 +93,41 @@ describe("buildThreadActionMenuItems", () => {
   it("marks delete as destructive and keeps it last", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
+  });
+
+  it("offers Schedule… when the thread has no schedule", () => {
+    const items = ids(baseState);
+    expect(items).toContain("schedule");
+    expect(items).not.toContain("pause-schedule");
+    expect(items).not.toContain("resume-schedule");
+    expect(items).not.toContain("cancel-schedule");
+  });
+
+  it("offers pause + cancel for an active schedule", () => {
+    const items = ids({ ...baseState, hasSchedule: true, isSchedulePaused: false });
+    expect(items).toContain("pause-schedule");
+    expect(items).toContain("cancel-schedule");
+    expect(items).not.toContain("schedule");
+    expect(items).not.toContain("resume-schedule");
+  });
+
+  it("offers resume + cancel for a paused schedule", () => {
+    const items = ids({ ...baseState, hasSchedule: true, isSchedulePaused: true });
+    expect(items).toContain("resume-schedule");
+    expect(items).toContain("cancel-schedule");
+    expect(items).not.toContain("schedule");
+    expect(items).not.toContain("pause-schedule");
+  });
+
+  it("hides all schedule items when the environment lacks scheduling support", () => {
+    const items = ids({
+      ...baseState,
+      hasSchedule: true,
+      supports: { ...baseState.supports, scheduling: false },
+    });
+    expect(items).not.toContain("schedule");
+    expect(items).not.toContain("pause-schedule");
+    expect(items).not.toContain("resume-schedule");
+    expect(items).not.toContain("cancel-schedule");
   });
 });

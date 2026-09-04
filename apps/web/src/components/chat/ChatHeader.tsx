@@ -33,6 +33,8 @@ import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useHelmCodeProjectFileScripts } from "~/hooks/useHelmCodeProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+import { useThreadActions } from "~/hooks/useThreadActions";
+import { ScheduleDialog } from "../ScheduleDialog";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -144,6 +146,14 @@ export const ChatHeader = memo(function ChatHeader({
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
   const [renaming, setRenaming] = useState<{ threadId: ThreadId; title: string } | null>(null);
+  // Keyed by thread like renaming above: navigating away with the dialog
+  // open must not leave it open against the newly active thread.
+  const [scheduleOpenForThreadId, setScheduleOpenForThreadId] = useState<ThreadId | null>(null);
+  const openSchedule = useCallback(
+    () => setScheduleOpenForThreadId(activeThreadId),
+    [activeThreadId],
+  );
+  const scheduleOpen = scheduleOpenForThreadId === activeThreadId;
   if (renaming !== null && renaming.threadId !== activeThreadId) {
     setRenaming(null);
   }
@@ -183,7 +193,9 @@ export const ChatHeader = memo(function ChatHeader({
     projectCwd: activeProjectCwd,
     changeRequestState,
     onStartRename: startRename,
+    onRequestSchedule: openSchedule,
   });
+  const { scheduleThread } = useThreadActions();
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const openMenuFromTitle = useCallback(() => {
     const rect = titleButtonRef.current?.getBoundingClientRect();
@@ -336,6 +348,14 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
       </div>
+      {isServerThread && scheduleOpen ? (
+        <ScheduleDialog
+          threadRef={activeThreadRef}
+          open
+          onClose={() => setScheduleOpenForThreadId(null)}
+          onSave={scheduleThread}
+        />
+      ) : null}
     </div>
   );
 });

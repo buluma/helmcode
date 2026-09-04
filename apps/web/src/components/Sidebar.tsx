@@ -39,6 +39,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CirclePauseIcon,
   ClockIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -119,6 +120,7 @@ import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat"
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import { ScheduleDialog } from "./ScheduleDialog";
 import {
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
@@ -1443,6 +1445,29 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {terminalStatusIcon}
+              {thread.schedule ? (
+                thread.schedule.enabled ? (
+                  <span
+                    role="img"
+                    aria-label="Scheduled"
+                    title={`Scheduled · next run in ${snoozeWakeLabel(thread.schedule.nextRunAt, {
+                      now: new Date().toISOString(),
+                    })}`}
+                    className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                  >
+                    <ClockIcon aria-hidden className="size-3.5" />
+                  </span>
+                ) : (
+                  <span
+                    role="img"
+                    aria-label="Schedule paused"
+                    title="Schedule paused"
+                    className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                  >
+                    <CirclePauseIcon aria-hidden className="size-3.5" />
+                  </span>
+                )
+              ) : null}
               {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
@@ -1608,6 +1633,10 @@ export default function Sidebar() {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    scheduleThread,
+    cancelThreadSchedule,
+    pauseThreadSchedule,
+    resumeThreadSchedule,
     pinThread,
     unpinThread,
     reorderPinnedThread,
@@ -2285,6 +2314,11 @@ export default function Sidebar() {
 
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
+  const [scheduleDialogRef, setScheduleDialogRef] = useState<ScopedThreadRef | null>(null);
+  const openScheduleDialog = useCallback((threadRef: ScopedThreadRef) => {
+    setScheduleDialogRef(threadRef);
+  }, []);
+  const closeScheduleDialog = useCallback(() => setScheduleDialogRef(null), []);
   const startThreadRename = useCallback((threadRef: ScopedThreadRef, title: string) => {
     setRenamingThreadKey(scopedThreadKey(threadRef));
     setRenamingTitle(title);
@@ -2950,6 +2984,9 @@ export default function Sidebar() {
           true;
         const supportsSnooze =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+        const supportsScheduling =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadScheduling ===
+          true;
         const supportsPinning =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinning === true;
         const supportsTitleRegeneration =
@@ -2968,11 +3005,14 @@ export default function Sidebar() {
               isPinned,
               isSettled,
               isSnoozed,
+              hasSchedule: thread.schedule != null,
+              isSchedulePaused: thread.schedule != null && !thread.schedule.enabled,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
+                scheduling: supportsScheduling,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
@@ -3033,6 +3073,58 @@ export default function Sidebar() {
           case "unsnooze":
             attemptUnsnooze(threadRef);
             return;
+          case "schedule": {
+            openScheduleDialog(threadRef);
+            return;
+          }
+          case "cancel-schedule": {
+            void (async () => {
+              const result = await cancelThreadSchedule(threadRef);
+              if (result._tag === "Failure") {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to cancel schedule",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+            })();
+            return;
+          }
+          case "pause-schedule": {
+            void (async () => {
+              const result = await pauseThreadSchedule(threadRef);
+              if (result._tag === "Failure") {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to pause schedule",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+            })();
+            return;
+          }
+          case "resume-schedule": {
+            void (async () => {
+              const result = await resumeThreadSchedule(threadRef);
+              if (result._tag === "Failure") {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to resume schedule",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+            })();
+            return;
+          }
           case "pin":
             attemptPin(threadRef);
             return;
@@ -3123,6 +3215,7 @@ export default function Sidebar() {
       attemptUnpin,
       attemptUnsettle,
       attemptUnsnooze,
+      cancelThreadSchedule,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
@@ -3131,7 +3224,10 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
+      openScheduleDialog,
+      pauseThreadSchedule,
       projectCwdByKey,
+      resumeThreadSchedule,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,
@@ -3794,6 +3890,14 @@ export default function Sidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
+      {scheduleDialogRef ? (
+        <ScheduleDialog
+          threadRef={scheduleDialogRef}
+          open
+          onClose={closeScheduleDialog}
+          onSave={scheduleThread}
+        />
+      ) : null}
     </>
   );
 }
