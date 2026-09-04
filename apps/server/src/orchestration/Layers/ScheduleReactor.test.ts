@@ -8,6 +8,7 @@ import {
 } from "@helmcode/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -52,7 +53,10 @@ const stubSnapshotQuery = (
   getThreadCheckpointContext: () => Effect.succeed(Option.none()),
   getFullThreadDiffContext: () => Effect.succeed(Option.none()),
   getThreadShellById: () => Effect.succeed(Option.none()),
-  getThreadDetailById: () => Effect.succeed(Option.none()),
+  getThreadDetailById: (threadId) =>
+    getSnapshot().pipe(
+      Effect.map((rm) => Option.fromNullishOr(rm.threads.find((thread) => thread.id === threadId))),
+    ),
   getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
   searchThreads: () => Effect.succeed({ matches: [] }),
 });
@@ -158,6 +162,16 @@ const runReactor = (
     const commands = yield* Ref.make<Array<OrchestrationCommand["type"]>>([]);
     const turnStarts = yield* Ref.make<Array<{ threadId: ThreadId; text: string }>>([]);
     const reschedules = yield* Ref.make<Array<string>>([]);
+    // TestClock.adjust only guarantees a due sleep's *immediate* continuation
+    // gets a turn to run — it does not wait for that continuation's own
+    // further async steps (dispatching commands here) to finish, so reading
+    // the Refs right after adjust races the fire. thread.schedule.create is
+    // always the last command fireSchedule dispatches (both the normal fire
+    // and the "turn already running" retry path end with it), so resolving
+    // this once it's seen is a reliable "fire has fully completed" signal —
+    // the same Deferred-based pattern VcsStatusBroadcaster.test.ts uses for
+    // the same class of TestClock race.
+    const fired = yield* Deferred.make<void>();
 
     const engine: OrchestrationEngineService["Service"] = {
       readEvents: () => Stream.empty,
@@ -171,7 +185,10 @@ const runReactor = (
               ]);
             }
             if (command.type === "thread.schedule.create") {
-              return Ref.update(reschedules, (calls) => [...calls, command.schedule.nextRunAt]);
+              return Ref.update(reschedules, (calls) => [
+                ...calls,
+                command.schedule.nextRunAt,
+              ]).pipe(Effect.andThen(Deferred.succeed(fired, undefined)));
             }
             return Effect.void;
           }),
@@ -195,6 +212,7 @@ const runReactor = (
         const reactor = yield* Effect.service(ScheduleReactor);
         yield* reactor.start();
         yield* TestClock.adjust(adjust);
+        yield* Deferred.await(fired);
       }),
     ).pipe(Effect.provide(testLayer));
 

@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { forkParked } from "../../serverActivation.ts";
@@ -122,14 +123,17 @@ const make = Effect.gen(function* () {
 
   // Map of threadId → active timer fiber. Kept in a Ref so schedule changes
   // can interrupt and replace a fiber. Most of these are asleep until
-  // nextRunAt, so `drain` must not join them directly (see activeFirings).
+  // nextRunAt; `firingSemaphore` below (not this map) is what `drain` waits
+  // on, since interrupting/joining a sleeping timer isn't "idle work".
   const timers = yield* Ref.make(HashMap.empty<ThreadId, Fiber.Fiber<void, never>>());
 
-  // Map of threadId → fiber currently executing a fire (dispatching the
-  // turn-start and rescheduling), tracked separately from `timers` so
-  // `drain` only waits on in-flight work and not on fibers asleep until
-  // their next run.
-  const activeFirings = yield* Ref.make(HashMap.empty<ThreadId, Fiber.Fiber<void, never>>());
+  // Acquired for the duration of a fire (dispatching the turn-start and
+  // rescheduling) so `drain` can wait for in-flight fires without joining
+  // the (typically many) timer fibers asleep until their next run. The
+  // permit count is just a generous ceiling on concurrent fires, not a
+  // concurrency limit — schedules never contend for it in practice.
+  const MAX_CONCURRENT_FIRINGS = 10_000;
+  const firingSemaphore = yield* Semaphore.make(MAX_CONCURRENT_FIRINGS);
 
   // Dispatch a schedule command (already built as an effect to surface UUID
   // generation failures). Any error is logged and swallowed so the timer fiber
@@ -213,42 +217,45 @@ const make = Effect.gen(function* () {
     yield* dispatchScheduleUpdate(scheduleCreateCommand(thread.id, { ...schedule, nextRunAt }));
   });
 
-  // Interrupt (and remove bookkeeping happens at next start) any timer already
-  // scheduled for the thread so a schedule update replaces rather than stacks.
+  // Interrupt any timer already scheduled for the thread (whether asleep or
+  // mid-fire — firing runs inline in the same fiber, see startTimerForSchedule)
+  // so a schedule update replaces rather than stacks. Removes the map entry
+  // too, but only if it still points at the fiber just interrupted — a
+  // concurrent replacement that already installed a newer fiber under the
+  // same key is left untouched. Without this removal, a cancelled (never
+  // re-scheduled) thread would leave a dead fiber reference in the map
+  // forever.
   const interruptTimer = Effect.fn("interruptTimer")(function* (threadId: ThreadId) {
-    const timerMap = yield* Ref.get(timers);
-    yield* Option.match(HashMap.get(timerMap, threadId), {
-      onNone: () => Effect.void,
-      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
-    });
-    // A firing may be in flight (forked separately so drain can track it
-    // apart from sleeping timers) — interrupt it too, so replacing or
-    // cancelling a schedule mid-fire still cancels the in-flight dispatch,
-    // matching the old inline (non-forked) behavior.
-    const firingMap = yield* Ref.get(activeFirings);
-    yield* Option.match(HashMap.get(firingMap, threadId), {
-      onNone: () => Effect.void,
-      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
-    });
+    const map = yield* Ref.get(timers);
+    const entry = HashMap.get(map, threadId);
+    if (Option.isNone(entry)) return;
+    const fiber = entry.value;
+    yield* Fiber.interrupt(fiber);
+    yield* Ref.update(timers, (current) =>
+      Option.match(HashMap.get(current, threadId), {
+        onNone: () => current,
+        onSome: (owner) => (owner === fiber ? HashMap.remove(current, threadId) : current),
+      }),
+    );
   });
 
-  // Reads the freshest thread state and fires its schedule if due.
+  // Reads the freshest state for just this thread and fires its schedule if
+  // due. A single-thread read (rather than the full projection snapshot,
+  // which hydrates every thread/message/activity in the system) since only
+  // one thread's schedule/session is needed to decide whether to fire.
   const fireTimerForThread = Effect.fn("fireTimerForThread")(function* (threadId: ThreadId) {
-    const snapshot = yield* snapshotQuery.getSnapshot().pipe(
+    const threadOption = yield* snapshotQuery.getThreadDetailById(threadId).pipe(
       Effect.catch((error) =>
-        Effect.logWarning("schedule reactor failed to read snapshot", {
+        Effect.logWarning("schedule reactor failed to read thread", {
           threadId,
           cause: String(error),
-        }).pipe(Effect.as(null)),
+        }).pipe(Effect.as(Option.none())),
       ),
     );
-    if (snapshot == null) {
+    if (Option.isNone(threadOption)) {
       return;
     }
-    const thread = snapshot.threads.find((candidate) => candidate.id === threadId);
-    if (thread == null) {
-      return;
-    }
+    const thread = threadOption.value;
     yield* fireSchedule(thread);
   });
 
@@ -267,15 +274,11 @@ const make = Effect.gen(function* () {
     const delayMs = Math.max(0, DateTime.toEpochMillis(nextRunAt) - DateTime.toEpochMillis(now));
 
     const timer = Effect.sleep(`${delayMs} millis`).pipe(
-      Effect.andThen(() =>
-        Effect.gen(function* () {
-          const firingFiber = yield* Effect.forkScoped(fireTimerForThread(threadId));
-          yield* Ref.update(activeFirings, (map) => HashMap.set(map, threadId, firingFiber));
-          yield* Fiber.join(firingFiber).pipe(
-            Effect.ensuring(Ref.update(activeFirings, (map) => HashMap.remove(map, threadId))),
-          );
-        }),
-      ),
+      // Runs inline (no extra fork) so interrupting this same fiber — e.g. a
+      // schedule cancelled or replaced mid-fire — cancels the fire too.
+      // Holding a permit for the duration is what lets `drain` (below) wait
+      // for in-flight fires without also waiting on fibers still asleep.
+      Effect.andThen(() => firingSemaphore.withPermits(1)(fireTimerForThread(threadId))),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           // Let interrupts (schedule replacement / scope close) propagate so the
@@ -330,12 +333,11 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Joins only fibers actively firing (dispatching + rescheduling), not the
-  // (typically many) timer fibers asleep until their nextRunAt.
-  const drain: ScheduleReactorShape["drain"] = Ref.get(activeFirings).pipe(
-    Effect.flatMap((map) => Fiber.joinAll(HashMap.values(map))),
-    Effect.asVoid,
-  );
+  // Acquiring every permit blocks until no fire is in flight, without
+  // waiting on the (typically many) timer fibers asleep until their nextRunAt.
+  const drain: ScheduleReactorShape["drain"] = firingSemaphore
+    .withPermits(MAX_CONCURRENT_FIRINGS)(Effect.void)
+    .pipe(Effect.asVoid);
 
   return {
     start,
