@@ -354,8 +354,8 @@ importers:
         specifier: ^0.2.8
         version: 0.2.8
       toml:
-        specifier: ^4.1.2
-        version: 4.1.2
+        specifier: ^4.2.0
+        version: 4.2.0
       uuid:
         specifier: ^14.0.2
         version: 14.0.2
@@ -568,8 +568,8 @@ importers:
   packages/sql/mysql2:
     dependencies:
       mysql2:
-        specifier: ^3.23.1
-        version: 3.23.1(@types/node@25.9.5)
+        specifier: ^3.24.3
+        version: 3.24.3(@types/node@25.9.5)
     devDependencies:
       '@testcontainers/mysql':
         specifier: ^11.14.0
@@ -5236,8 +5236,8 @@ packages:
   multipasta@0.2.8:
     resolution: {integrity: sha512-ZPWuMKyv0cSO29f7hozp+k6+crZbQijV8ipMvxNxRf2SwtYGTX1ZX89Kd20VV4H9Znonx+EQn+iy1wGQsJ+b+Q==}
 
-  mysql2@3.23.1:
-    resolution: {integrity: sha512-tTuRnC7qCet2IOfSNMYZ5SwXuBnfvBPAcIA28P0gtruXyZlU1LMxA6uha32kYypoFgyYklMqhLWwt4laYwXR/Q==}
+  mysql2@3.24.3:
+    resolution: {integrity: sha512-OKfWHkMAg9v06neq8FmSyhbxPQKABN9PAW5G9/bDTXzJBO5xXtkKL0V27vju7HQWk9UD4Od5BZsvCtBTB1CPEw==}
     engines: {node: '>= 8.0'}
     peerDependencies:
       '@types/node': '>= 8'
@@ -6351,8 +6351,8 @@ packages:
     resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
     engines: {node: '>=0.6'}
 
-  toml@4.1.2:
-    resolution: {integrity: sha512-m0vXfHODcw3gk+KONAOlVQ5yNHc3yS3B1ybM3HS1vqDoS0RWTDDVBVVTYi8hH0k+2OM1vmo9fb1WX9EVqjqfHA==}
+  toml@4.2.0:
+    resolution: {integrity: sha512-TvAJjbHZlYmI323+srtqHQFyJsoWy6mI09ppkuj9+iRsqsVKG9fvTcOP7FHF2UCb0QSYtjEavffrKzdd0XgClg==}
     engines: {node: '>=20'}
 
   totalist@3.0.1:
@@ -11308,11 +11308,10 @@ snapshots:
 
   multipasta@0.2.8: {}
 
-  mysql2@3.23.1(@types/node@25.9.5):
+  mysql2@3.24.3(@types/node@25.9.5):
     dependencies:
       '@types/node': 25.9.5
       aws-ssl-profiles: 1.1.2
-      denque: 2.1.0
       generate-function: 2.3.1
       iconv-lite: 0.7.3
       long: 5.3.2
@@ -12568,7 +12567,7 @@ snapshots:
 
   toidentifier@1.0.1: {}
 
-  toml@4.1.2: {}
+  toml@4.2.0: {}
 
   totalist@3.0.1: {}
 
