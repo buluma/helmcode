@@ -144,7 +144,12 @@ export function useThreadActionMenu(input: {
         const supports = {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
-          scheduling: readEnvironmentSupportsScheduling(threadRef.environmentId),
+          // Also requires a wired onRequestSchedule (it's optional on this
+          // hook, unlike the other action callbacks): without it, "Schedule…"
+          // would render but silently no-op on click.
+          scheduling:
+            readEnvironmentSupportsScheduling(threadRef.environmentId) &&
+            onRequestSchedule !== undefined,
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };

@@ -1450,9 +1450,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span
                     role="img"
                     aria-label="Scheduled"
-                    title={`Scheduled · next run ${formatRelativeTimeLabel(
-                      thread.schedule.nextRunAt,
-                    )}`}
+                    title={`Scheduled · next run in ${snoozeWakeLabel(thread.schedule.nextRunAt, {
+                      now: new Date().toISOString(),
+                    })}`}
                     className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
                   >
                     <ClockIcon aria-hidden className="size-3.5" />
@@ -3215,6 +3215,7 @@ export default function Sidebar() {
       attemptUnpin,
       attemptUnsettle,
       attemptUnsnooze,
+      cancelThreadSchedule,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
@@ -3223,7 +3224,10 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
+      openScheduleDialog,
+      pauseThreadSchedule,
       projectCwdByKey,
+      resumeThreadSchedule,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,

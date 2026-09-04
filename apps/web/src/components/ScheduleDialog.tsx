@@ -108,7 +108,11 @@ export function ScheduleDialog({ threadRef, open, onClose, onSave }: ScheduleDia
       cron: mode === "cron" ? cron : null,
       intervalMs: mode === "interval" ? Math.max(1, intervalMinutes) * 60_000 : null,
       prompt: trimmedPrompt,
-      nextRunAt,
+      // Recomputed against the current time rather than reusing the
+      // memoized preview: the decider rejects a nextRunAt that isn't
+      // strictly in the future, and the preview can go stale if the dialog
+      // sits open past it (e.g. a short custom interval).
+      nextRunAt: computeNextRunAt(mode, intervalMinutes, cron),
       createdAt: new Date().toISOString(),
       ...(overrideModel && resolvedSelection
         ? {
@@ -137,7 +141,6 @@ export function ScheduleDialog({ threadRef, open, onClose, onSave }: ScheduleDia
     cron,
     intervalMinutes,
     mode,
-    nextRunAt,
     onClose,
     onSave,
     overrideModel,

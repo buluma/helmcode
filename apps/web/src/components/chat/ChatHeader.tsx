@@ -146,8 +146,14 @@ export const ChatHeader = memo(function ChatHeader({
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
   const [renaming, setRenaming] = useState<{ threadId: ThreadId; title: string } | null>(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const openSchedule = useCallback(() => setScheduleOpen(true), []);
+  // Keyed by thread like renaming above: navigating away with the dialog
+  // open must not leave it open against the newly active thread.
+  const [scheduleOpenForThreadId, setScheduleOpenForThreadId] = useState<ThreadId | null>(null);
+  const openSchedule = useCallback(
+    () => setScheduleOpenForThreadId(activeThreadId),
+    [activeThreadId],
+  );
+  const scheduleOpen = scheduleOpenForThreadId === activeThreadId;
   if (renaming !== null && renaming.threadId !== activeThreadId) {
     setRenaming(null);
   }
@@ -346,7 +352,7 @@ export const ChatHeader = memo(function ChatHeader({
         <ScheduleDialog
           threadRef={activeThreadRef}
           open
-          onClose={() => setScheduleOpen(false)}
+          onClose={() => setScheduleOpenForThreadId(null)}
           onSave={scheduleThread}
         />
       ) : null}
